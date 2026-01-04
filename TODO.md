@@ -29,15 +29,15 @@
   - Milestone tracking within a single goal
   - Dependency-aware task ordering
 
-- [ ] **Short/Research Mode**: Quick exploration, no commits
+- [x] **Short/Research Mode**: Quick exploration, no commits
   - `--research` flag: analyze only, suggest changes, don't apply
-  - `--dry-run`: show what would change without doing it
+  - `--plan` flag: create detailed plan, wait for approval before executing
   - Single-shot mode: one improvement, then stop
 
-- [ ] **Fix/Structure Mode**: Targeted repairs
-  - `--fix-only`: only fix failing tests/lint, no new features
-  - `--structure`: reorganize code without changing behavior
+- [x] **Fix/Structure Mode**: Targeted repairs
+  - `--fix` flag: only fix failing tests/lint, no new features
   - `--refactor <target>`: focus on specific file/module
+  - `--watch` flag: (placeholder) monitor for changes, continuously improve
 
 #### Summaries & Reporting
 - [ ] Cross-iteration summaries (what changed overall)
@@ -53,7 +53,7 @@
 - [ ] Multiple named sessions per repo
 - [ ] State diffing (compare two sessions)
 - [ ] Export state to shareable format
-- [ ] Import goals/config from YAML file
+- [x] Import goals/config from YAML file -- `--prompt-file` supports .yaml, .json, .md, .txt
 
 #### Integration
 - [ ] GitHub Actions workflow for CI improvement
@@ -112,6 +112,19 @@
 - [x] py.typed marker for type checking support
 - [x] Comprehensive __init__.py exports (80+ public items)
 - [x] Virtual environment detection and command resolution
+
+### Smart Prompt Input (All Done)
+- [x] `--prompt-file` / `-f` flag to read goals from files
+- [x] Intelligent parsing of .txt, .md, .yaml, .json formats
+- [x] Extract sub-goals and constraints from structured prompts
+- [x] ParsedPrompt with to_prompt_string() for Claude-friendly output
+
+### Execution Modes (All Done)
+- [x] `--research` mode: explore without making changes
+- [x] `--fix` mode: only fix failing tests/lint
+- [x] `--refactor <target>` mode: focused refactoring
+- [x] `--plan` mode: create plan, wait for approval
+- [x] `--watch` mode: placeholder for continuous monitoring
 
 ---
 

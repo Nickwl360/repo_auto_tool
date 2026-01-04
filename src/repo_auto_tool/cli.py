@@ -6,8 +6,10 @@ from pathlib import Path
 
 from .agents import AgentMode, create_agent
 from .config import ImproverConfig
+from .exceptions import PromptParseError
 from .improver import RepoImprover
 from .logging import setup_logging
+from .prompt_parser import ParsedPrompt, PromptParser
 
 
 def _run_agent_mode(args: argparse.Namespace, config: "ImproverConfig") -> int:
@@ -94,13 +96,26 @@ def main() -> int:
 Examples:
   # Basic usage
   repo-improver /path/to/repo "Add type hints to all functions"
-  
+
   # With custom settings
   repo-improver . "Improve test coverage to 80%" --max-iterations 50 --test-cmd "pytest --cov"
-  
-  # Analyze only (no changes)
-  repo-improver . "Refactor for better modularity" --analyze-only
-  
+
+  # Read goal from a file (supports .txt, .md, .yaml, .json)
+  repo-improver . --prompt-file ideas.md
+
+  # Research mode - explore without changes
+  repo-improver . --research
+
+  # Fix mode - only fix failing tests/lint
+  repo-improver . --fix
+
+  # Refactor a specific target
+  repo-improver . --refactor src/auth.py
+  repo-improver . --refactor "authentication module"
+
+  # Plan mode - create plan, wait for approval
+  repo-improver . "Add caching layer" --plan
+
   # Resume a paused session
   repo-improver . --resume
 """,
@@ -120,7 +135,17 @@ Examples:
         nargs="?",
         help="The improvement goal (natural language description)",
     )
-    
+
+    # Smart prompt input
+    parser.add_argument(
+        "--prompt-file", "-f",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="Read goal from a file (supports .txt, .md, .yaml, .json). "
+             "Intelligently parses structured and unstructured formats.",
+    )
+
     # Iteration settings
     parser.add_argument(
         "--max-iterations", "-n",
@@ -194,6 +219,44 @@ Examples:
         "--resume",
         action="store_true",
         help="Resume from previous session state",
+    )
+
+    # New execution modes (Goal #8)
+    parser.add_argument(
+        "--research",
+        action="store_true",
+        help="Research mode: explore and report without making changes. "
+             "Analyzes the codebase, identifies patterns, and suggests improvements.",
+    )
+
+    parser.add_argument(
+        "--fix",
+        action="store_true",
+        help="Fix mode: only fix failing tests and lint errors. "
+             "Does not add new features or make other changes.",
+    )
+
+    parser.add_argument(
+        "--refactor",
+        type=str,
+        default=None,
+        metavar="TARGET",
+        help="Refactor mode: focused refactoring on a specific file, module, or pattern. "
+             "Example: --refactor src/auth.py or --refactor 'authentication module'",
+    )
+
+    parser.add_argument(
+        "--plan",
+        action="store_true",
+        help="Plan mode: create a detailed implementation plan and wait for approval "
+             "before executing. Outputs the plan without making changes.",
+    )
+
+    parser.add_argument(
+        "--watch",
+        action="store_true",
+        help="Watch mode: monitor the repository for changes and continuously improve. "
+             "Runs in the background and responds to file changes.",
     )
 
     parser.add_argument(
@@ -292,16 +355,54 @@ Examples:
     )
 
     args = parser.parse_args()
-    
+
+    # Determine the execution mode
+    execution_mode = "standard"
+    if args.research:
+        execution_mode = "research"
+    elif args.fix:
+        execution_mode = "fix"
+    elif args.refactor:
+        execution_mode = "refactor"
+    elif args.plan:
+        execution_mode = "plan"
+    elif args.watch:
+        execution_mode = "watch"
+    elif args.analyze_only:
+        execution_mode = "analyze"
+
+    # Handle --prompt-file for smart prompt input
+    parsed_prompt: ParsedPrompt | None = None
+    if args.prompt_file:
+        try:
+            prompt_parser = PromptParser()
+            parsed_prompt = prompt_parser.parse_file(args.prompt_file)
+            if not args.quiet:
+                fmt = parsed_prompt.format_detected
+                print(f"Loaded goal from {args.prompt_file} (format: {fmt})")
+                if parsed_prompt.sub_goals:
+                    print(f"  Found {len(parsed_prompt.sub_goals)} sub-goals")
+                if parsed_prompt.constraints:
+                    print(f"  Found {len(parsed_prompt.constraints)} constraints")
+        except PromptParseError as e:
+            parser.error(f"Failed to parse prompt file: {e}")
+        except Exception as e:
+            parser.error(f"Unexpected error reading prompt file: {e}")
+
     # Validate arguments
-    # Goal not required for pre-analysis mode, diagnostics mode, or analyze-only
-    if not args.resume and not args.goal and not args.analyze_only:
-        if args.agent_mode not in ("pre-analysis", "diagnostics"):
-            parser.error(
-                "Goal is required unless using --resume, --analyze-only, "
-                "or --agent-mode pre-analysis/diagnostics"
-            )
-    
+    # Goal not required for certain modes
+    goal_not_required_modes = (
+        args.resume or args.analyze_only or args.research or args.fix or
+        args.agent_mode in ("pre-analysis", "diagnostics")
+    )
+    has_goal = args.goal or parsed_prompt or args.refactor
+
+    if not goal_not_required_modes and not has_goal:
+        parser.error(
+            "Goal is required unless using --resume, --analyze-only, --research, "
+            "--fix, --refactor, or --agent-mode pre-analysis/diagnostics"
+        )
+
     # Check for existing state if resuming
     state_file = args.repo_path / ".repo-improver-state.json"
     if args.resume:
@@ -309,8 +410,31 @@ Examples:
             parser.error(f"No state file found at {state_file}")
         # Load goal from state
         import json
-        state_data = json.loads(state_file.read_text())
-        goal = state_data["goal"]
+        try:
+            state_data = json.loads(state_file.read_text())
+            goal = state_data.get("goal", "")
+        except (json.JSONDecodeError, OSError) as e:
+            parser.error(f"Failed to load state file: {e}")
+    elif parsed_prompt:
+        # Use parsed prompt for goal (converts to full prompt string)
+        goal = parsed_prompt.to_prompt_string()
+    elif args.refactor:
+        # Generate refactor-specific goal
+        goal = (
+            f"Refactor the following target while maintaining existing behavior: "
+            f"{args.refactor}"
+        )
+    elif args.fix:
+        goal = (
+            "Fix all failing tests and lint errors. "
+            "Do not add new features or make other changes."
+        )
+    elif args.research:
+        goal = (
+            "Analyze and explore the codebase. Identify patterns, architecture, "
+            "potential improvements, and technical debt. "
+            "Report findings without making any changes."
+        )
     else:
         goal = args.goal or "Analyze and report on code quality"
     
@@ -352,14 +476,55 @@ Examples:
     if args.agent_mode:
         return _run_agent_mode(args, config)
 
-    # Run
+    # Run based on execution mode
     improver = RepoImprover(config)
 
-    if args.analyze_only:
+    if execution_mode == "analyze" or args.analyze_only:
         analysis = improver.analyze()
         print(analysis)
         return 0
 
+    if execution_mode == "research":
+        # Research mode: analyze without making changes
+        if not args.quiet:
+            print("Running in research mode - analyzing without making changes...")
+        analysis = improver.analyze()
+        print("\n=== Research Report ===\n")
+        print(analysis)
+        return 0
+
+    if execution_mode == "plan":
+        # Plan mode: create detailed plan, wait for approval
+        if not args.quiet:
+            print("Running in plan mode - creating implementation plan...")
+        # Use goal-decomposer agent for planning
+        agent = create_agent(
+            mode="goal-decomposer",
+            working_dir=args.repo_path,
+            timeout=600,
+        )
+        result = agent.run(goal=goal)
+        if result.success:
+            print("\n=== Implementation Plan ===\n")
+            print(result.output)
+            if result.steps:
+                print("\n--- Steps ---")
+                for i, step in enumerate(result.steps, 1):
+                    print(f"  {i}. {step}")
+            print("\nReview the plan above. Run without --plan to execute.")
+            return 0
+        else:
+            print(f"Failed to create plan: {result.error}", file=sys.stderr)
+            return 1
+
+    if execution_mode == "watch":
+        # Watch mode: continuous monitoring (not yet fully implemented)
+        print("Watch mode is not yet fully implemented.", file=sys.stderr)
+        print("This mode will monitor the repository for changes and continuously improve.")
+        print("For now, use the standard mode with --max-iterations for continuous improvement.")
+        return 1
+
+    # Standard execution (or fix/refactor modes which use standard loop)
     result = improver.run()
 
     # Show detailed metrics if requested
