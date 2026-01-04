@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 from .exceptions import InvalidConfigValueError, InvalidPathError
+from .logging import VALID_LOG_LEVELS
 
 
 @dataclass
@@ -45,6 +46,7 @@ class ImproverConfig:
     # Output settings
     verbose: bool = True
     log_file: Path | None = None
+    log_level: str = "INFO"
     output_format: Literal["text", "json"] = "text"
     
     def __post_init__(self) -> None:
@@ -72,6 +74,7 @@ class ImproverConfig:
         self._validate_repo_path()
         self._validate_iteration_limits()
         self._validate_goal()
+        self._validate_log_level()
 
     def _validate_repo_path(self) -> None:
         """Validate that repo_path exists and is a directory."""
@@ -109,3 +112,15 @@ class ImproverConfig:
                 self.goal,
                 "Goal cannot be empty"
             )
+
+    def _validate_log_level(self) -> None:
+        """Validate the log level setting."""
+        level_upper = self.log_level.upper()
+        if level_upper not in VALID_LOG_LEVELS:
+            raise InvalidConfigValueError(
+                "log_level",
+                self.log_level,
+                f"Must be one of: {', '.join(sorted(VALID_LOG_LEVELS))}"
+            )
+        # Normalize to uppercase
+        self.log_level = level_upper

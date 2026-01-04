@@ -25,6 +25,7 @@ from .exceptions import (
     ValidationError,
 )
 from .improver import RepoImprover
+from .logging import JSONFormatter, setup_logging
 from .state import ImprovementState
 
 __version__ = "0.1.0"
@@ -33,6 +34,9 @@ __all__ = [
     "RepoImprover",
     "ImproverConfig",
     "ImprovementState",
+    # Logging
+    "setup_logging",
+    "JSONFormatter",
     # Base exception
     "RepoAutoToolError",
     # Configuration errors
