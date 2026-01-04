@@ -51,6 +51,16 @@ from .safety import (
     SecretsRedactor,
 )
 from .state import ImprovementState, StatusType, truncate_text
+from .validators import (
+    CommandValidator,
+    LintValidator,
+    SyntaxValidator,
+    TestValidator,
+    TypeCheckValidator,
+    ValidationPipeline,
+    ValidationResult,
+    Validator,
+)
 
 __version__ = "0.1.0"
 __all__ = [
@@ -114,4 +124,13 @@ __all__ = [
     "GitError",
     "GitNotInitializedError",
     "GitOperationError",
+    # Validators
+    "Validator",
+    "CommandValidator",
+    "TestValidator",
+    "LintValidator",
+    "TypeCheckValidator",
+    "SyntaxValidator",
+    "ValidationPipeline",
+    "ValidationResult",
 ]
