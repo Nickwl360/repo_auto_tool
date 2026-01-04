@@ -154,8 +154,9 @@ Do NOT simply revert - try to fix the problems properly.
         when a venv is detected in the repository.
 
         Smart detection: Skips test validator if no test files are found.
+        Parallel mode: If enabled, validators run concurrently for faster validation.
         """
-        pipeline = ValidationPipeline()
+        pipeline = ValidationPipeline(parallel=self.config.parallel_validation)
 
         if self.config.run_tests:
             # Smart test detection - skip if no test files exist

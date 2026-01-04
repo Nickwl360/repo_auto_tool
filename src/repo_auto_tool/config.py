@@ -118,6 +118,7 @@ class ImproverConfig:
     run_linter: bool = True
     lint_command: str = "ruff check ."
     custom_validators: list[str] = field(default_factory=list)  # Shell commands
+    parallel_validation: bool = False  # Run validators concurrently
 
     # Git safety
     use_git: bool = True

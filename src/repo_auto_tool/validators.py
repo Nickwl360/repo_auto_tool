@@ -3,6 +3,7 @@
 import logging
 import subprocess
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -143,57 +144,150 @@ class SyntaxValidator(Validator):
 
 
 class ValidationPipeline:
-    """Run multiple validators in sequence."""
-    
-    def __init__(self, validators: list[Validator] | None = None):
+    """Run multiple validators, optionally in parallel.
+
+    Parallel mode runs all validators concurrently using threads,
+    which can significantly speed up validation when multiple slow
+    validators (like tests and linting) are configured.
+    """
+
+    def __init__(
+        self,
+        validators: list[Validator] | None = None,
+        parallel: bool = False,
+        max_workers: int | None = None,
+    ):
+        """Initialize the validation pipeline.
+
+        Args:
+            validators: List of validators to run.
+            parallel: If True, run validators concurrently using threads.
+            max_workers: Maximum number of parallel workers. Defaults to
+                number of validators (one thread per validator).
+        """
         self.validators = validators or []
-    
+        self.parallel = parallel
+        self.max_workers = max_workers
+
     def add(self, validator: Validator) -> "ValidationPipeline":
         """Add a validator to the pipeline."""
         self.validators.append(validator)
         return self
-    
+
     def validate(self, repo_path: Path) -> tuple[bool, list[ValidationResult]]:
-        """
-        Run all validators.
-        
+        """Run all validators.
+
+        If parallel mode is enabled, validators run concurrently.
+        Results are always returned in the order validators were added.
+
         Returns:
             (all_passed, list of results)
         """
+        if self.parallel and len(self.validators) > 1:
+            return self._validate_parallel(repo_path)
+        return self._validate_sequential(repo_path)
+
+    def _validate_sequential(
+        self, repo_path: Path
+    ) -> tuple[bool, list[ValidationResult]]:
+        """Run validators sequentially (original behavior)."""
         results = []
         all_passed = True
-        
+
         for validator in self.validators:
             result = validator.validate(repo_path)
             results.append(result)
             if not result.passed:
                 all_passed = False
                 # Continue running other validators for full report
-        
+
         return all_passed, results
-    
+
+    def _validate_parallel(
+        self, repo_path: Path
+    ) -> tuple[bool, list[ValidationResult]]:
+        """Run validators in parallel using threads.
+
+        Each validator runs in its own thread. Results are collected
+        and returned in the original validator order.
+        """
+        workers = self.max_workers or len(self.validators)
+        logger.info(f"Running {len(self.validators)} validators in parallel")
+
+        # Map to track validator index for result ordering
+        results_map: dict[int, ValidationResult] = {}
+
+        def run_validator(
+            index: int, validator: Validator
+        ) -> tuple[int, ValidationResult]:
+            """Wrapper to run a validator and return its index."""
+            result = validator.validate(repo_path)
+            return index, result
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            # Submit all validators
+            futures = {
+                executor.submit(run_validator, i, v): i
+                for i, v in enumerate(self.validators)
+            }
+
+            # Collect results as they complete
+            for future in as_completed(futures):
+                try:
+                    index, result = future.result()
+                    results_map[index] = result
+                except Exception as e:
+                    # If a validator thread fails unexpectedly, record failure
+                    index = futures[future]
+                    validator_name = self.validators[index].name
+                    logger.error(f"Validator '{validator_name}' raised exception: {e}")
+                    results_map[index] = ValidationResult(
+                        passed=False,
+                        validator_name=validator_name,
+                        message=f"Exception during validation: {e}",
+                        output=str(e),
+                    )
+
+        # Reconstruct results in original order
+        results = [results_map[i] for i in range(len(self.validators))]
+        all_passed = all(r.passed for r in results)
+
+        return all_passed, results
+
     @classmethod
     def default(
-        cls, test_cmd: str = "pytest", lint_cmd: str = "ruff check ."
+        cls,
+        test_cmd: str = "pytest",
+        lint_cmd: str = "ruff check .",
+        parallel: bool = False,
     ) -> "ValidationPipeline":
-        """Create a default validation pipeline."""
-        return cls([
-            SyntaxValidator(),
-            LintValidator(lint_cmd),
-            TestValidator(test_cmd),
-        ])
-    
+        """Create a default validation pipeline.
+
+        Args:
+            test_cmd: Command to run tests.
+            lint_cmd: Command to run linter.
+            parallel: If True, run validators concurrently.
+        """
+        return cls(
+            [
+                SyntaxValidator(),
+                LintValidator(lint_cmd),
+                TestValidator(test_cmd),
+            ],
+            parallel=parallel,
+        )
+
     def get_failure_summary(self, results: list[ValidationResult]) -> str:
         """Get a summary of failures for Claude context."""
         failures = [r for r in results if not r.passed]
         if not failures:
             return "All validations passed."
-        
+
         parts = ["Validation failures:"]
         for f in failures:
             parts.append(f"- {f.validator_name}: {f.message}")
             if f.output:
                 # Truncate output for context
                 parts.append(f"  Output: {f.output[:500]}...")
-        
+
         return "\n".join(parts)

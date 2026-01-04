@@ -159,7 +159,13 @@ Examples:
         action="store_true",
         help="Skip running linter",
     )
-    
+
+    parser.add_argument(
+        "--parallel-validation",
+        action="store_true",
+        help="Run validators (tests, lint) in parallel for faster validation",
+    )
+
     # Git settings
     parser.add_argument(
         "--no-git",
@@ -287,6 +293,7 @@ Examples:
         test_command=args.test_cmd,
         run_linter=not args.no_lint,
         lint_command=args.lint_cmd,
+        parallel_validation=args.parallel_validation,
         use_git=not args.no_git,
         branch_name=args.branch,
         state_dir=args.state_dir,
