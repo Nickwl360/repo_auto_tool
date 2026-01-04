@@ -40,6 +40,7 @@ from .exceptions import (
     TestFailureError,
     ValidationError,
 )
+from .git_helper import GitHelper, GitStatus
 from .improver import RepoImprover
 from .logging import JSONFormatter, setup_logging
 from .safety import (
@@ -58,6 +59,9 @@ __all__ = [
     "ImproverConfig",
     "ImprovementState",
     "StatusType",
+    # Git utilities
+    "GitHelper",
+    "GitStatus",
     # Utilities
     "find_venv_path",
     "get_venv_command",

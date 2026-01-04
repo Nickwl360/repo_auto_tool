@@ -10,6 +10,7 @@ from .convergence import (
     ConvergenceDetector,
     ConvergenceState,
 )
+from .exceptions import GitNotInitializedError
 from .git_helper import GitHelper
 from .safety import SafetyManager
 from .state import ImprovementState
@@ -365,7 +366,12 @@ Do NOT simply revert - try to fix the problems properly.
         
         # Setup git branch
         if self.git:
-            self.git.setup_branch()
+            try:
+                self.git.setup_branch()
+            except GitNotInitializedError:
+                logger.warning("Not a git repository, disabling git operations")
+                self.git = None
+                self.change_tracker = None
         
         try:
             while self.state.current_iteration < self.config.max_iterations:
