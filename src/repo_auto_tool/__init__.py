@@ -60,6 +60,11 @@ from .model_selector import (
     ModelSelector,
     TaskComplexity,
 )
+from .prompt_adapter import (
+    AdaptiveGuidance,
+    FailureRecord,
+    PromptAdapter,
+)
 from .safety import (
     DangerousCommand,
     DangerousCommandDetector,
@@ -126,6 +131,10 @@ __all__ = [
     "MODEL_HAIKU",
     "MODEL_SONNET",
     "MODEL_OPUS",
+    # Prompt adaptation
+    "PromptAdapter",
+    "AdaptiveGuidance",
+    "FailureRecord",
     # Logging
     "setup_logging",
     "get_logger",

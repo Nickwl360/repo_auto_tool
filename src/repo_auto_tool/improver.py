@@ -13,6 +13,7 @@ from .convergence import (
 from .exceptions import GitNotInitializedError
 from .git_helper import GitHelper
 from .model_selector import ModelSelector
+from .prompt_adapter import PromptAdapter
 from .safety import SafetyManager
 from .state import ImprovementState
 from .validators import CommandValidator, ValidationPipeline
@@ -137,6 +138,12 @@ Do NOT simply revert - try to fix the problems properly.
         self.convergence_detector = ConvergenceDetector(self.convergence_config)
         self.convergence_state = ConvergenceState()
         self.change_tracker = ChangeTracker(config.repo_path) if config.use_git else None
+
+        # Initialize adaptive prompt system
+        # Pre-populate from existing iteration history if resuming
+        self.prompt_adapter = PromptAdapter.from_iteration_history(
+            [it.to_dict() for it in self.state.iterations]
+        )
 
         # Setup logging
         self._setup_logging()
@@ -271,6 +278,9 @@ Do NOT simply revert - try to fix the problems properly.
             task=task,
         )
 
+        # Apply adaptive guidance based on past failure patterns
+        prompt = self.prompt_adapter.enhance_prompt(prompt)
+
         # Use smart model selection if enabled
         model_override = None
         if self.model_selector:
@@ -344,6 +354,9 @@ Do NOT simply revert - try to fix the problems properly.
         if all_passed:
             logger.info("[OK] All validations passed")
 
+            # Record success for adaptive prompt system (helps decay old guidance)
+            self.prompt_adapter.record_success()
+
             # Commit if using git
             commit_hash = None
             if self.git and self.config.commit_each_iteration:
@@ -371,6 +384,14 @@ Do NOT simply revert - try to fix the problems properly.
         else:
             logger.warning("[FAIL] Validation failed")
             failure_summary = self.validators.get_failure_summary(validation_results)
+
+            # Record failure pattern for adaptive prompt enhancement
+            self.prompt_adapter.record_from_validation_error(failure_summary)
+            adapter_stats = self.prompt_adapter.get_stats()
+            logger.debug(
+                f"Prompt adapter stats: {adapter_stats['failure_counts']}, "
+                f"active guidance: {adapter_stats['active_guidance_count']}"
+            )
 
             # Rollback changes
             if self.git:
