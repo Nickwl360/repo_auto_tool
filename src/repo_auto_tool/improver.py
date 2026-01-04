@@ -4,7 +4,14 @@ import logging
 
 from .claude_interface import ClaudeCodeInterface
 from .config import ImproverConfig
+from .convergence import (
+    ChangeTracker,
+    ConvergenceConfig,
+    ConvergenceDetector,
+    ConvergenceState,
+)
 from .git_helper import GitHelper
+from .safety import SafetyManager
 from .state import ImprovementState
 from .validators import CommandValidator, ValidationPipeline
 
@@ -84,27 +91,39 @@ Do NOT simply revert - try to fix the problems properly.
 
     def __init__(self, config: ImproverConfig):
         self.config = config
-        
+
         # Initialize components
         self.claude = ClaudeCodeInterface(
             working_dir=config.repo_path,
             allowed_tools=config.allowed_tools,
             model=config.model,
         )
-        
+
         self.validators = self._setup_validators()
-        
+
         self.git = GitHelper(
             repo_path=config.repo_path,
             branch_name=config.branch_name,
         ) if config.use_git else None
-        
+
         self.state = ImprovementState.load_or_create(
             path=config.state_file,
             goal=config.goal,
             repo_path=str(config.repo_path),
         )
-        
+
+        # Initialize safety manager for secret redaction and dangerous command detection
+        self.safety_manager = SafetyManager(
+            redact_secrets=True,
+            detect_dangerous=True,
+        )
+
+        # Initialize convergence detection components
+        self.convergence_config = ConvergenceConfig()
+        self.convergence_detector = ConvergenceDetector(self.convergence_config)
+        self.convergence_state = ConvergenceState()
+        self.change_tracker = ChangeTracker(config.repo_path) if config.use_git else None
+
         # Setup logging
         self._setup_logging()
     
@@ -200,8 +219,19 @@ Do NOT simply revert - try to fix the problems properly.
             return False
         
         result = response.result
+
+        # Process response through safety manager (redact secrets, detect dangerous commands)
+        redacted_result, secret_matches = self.safety_manager.process_text(result)
+        if secret_matches:
+            logger.warning(
+                f"Safety: Found {len(secret_matches)} potential secrets in response"
+            )
+            for match in secret_matches:
+                logger.warning(f"  - {match.secret_type} at position {match.start_position}")
+            result = redacted_result
+
         logger.info(f"Claude response: {result[:200]}...")
-        
+
         # Check for goal completion
         if result.strip().startswith("GOAL_COMPLETE:"):
             logger.info(":) Claude indicates goal is complete!")
@@ -232,12 +262,21 @@ Do NOT simply revert - try to fix the problems properly.
         
         if all_passed:
             logger.info("[OK] All validations passed")
-            
+
             # Commit if using git
             commit_hash = None
             if self.git and self.config.commit_each_iteration:
                 commit_hash = self.git.commit(f"Iteration {iteration_num}: {result[:50]}")
-            
+
+                # Track change metrics for convergence detection
+                if self.change_tracker:
+                    metrics = self.change_tracker.get_diff_stats("HEAD~1")
+                    self.convergence_state.add_metrics(metrics)
+                    logger.info(
+                        f"Change metrics: {metrics.files_changed} files, "
+                        f"+{metrics.lines_added}/-{metrics.lines_removed} lines"
+                    )
+
             self.state.record_iteration(
                 prompt=task,
                 result=result,
@@ -288,22 +327,32 @@ Do NOT simply revert - try to fix the problems properly.
                     logger.error(f"Too many consecutive failures ({failures})")
                     self.state.mark_failed("Max consecutive failures reached")
                     break
-                
+
                 # Check if already complete
                 if self.state.status == "completed":
                     logger.info("Goal already completed!")
                     break
-                
+
+                # Check convergence before each iteration
+                action, reason = self.convergence_detector.analyze(self.convergence_state)
+                if action == "stop":
+                    logger.info(f"Convergence detected: {reason}")
+                    self.state.status = "converged"
+                    self.state.summary = f"Converged: {reason}"
+                    break
+                elif action == "checkpoint":
+                    self._handle_checkpoint(reason)
+
                 # Run an iteration
                 self._run_iteration()
-                
+
                 # Save state after each iteration
                 self.state.save(self.config.state_file)
-                
+
                 # Check for completion
                 if self.state.status == "completed":
                     break
-            
+
             else:
                 # Reached max iterations
                 logger.warning(f"Reached max iterations ({self.config.max_iterations})")
@@ -325,6 +374,32 @@ Do NOT simply revert - try to fix the problems properly.
         
         return self.state
     
+    def _handle_checkpoint(self, reason: str) -> None:
+        """Handle a checkpoint during improvement loop.
+
+        Args:
+            reason: The reason for the checkpoint.
+        """
+        logger.info(f"\n{'='*60}")
+        logger.info("CHECKPOINT")
+        logger.info(f"{'='*60}")
+        logger.info(f"Reason: {reason}")
+        logger.info(f"Iteration: {self.state.current_iteration}")
+
+        successful = sum(
+            1 for it in self.state.iterations if it.success and it.validation_passed
+        )
+        logger.info(f"Successful iterations so far: {successful}")
+
+        # Log convergence state info
+        if self.convergence_state.history:
+            avg_rate = self.convergence_state.average_change_rate(
+                self.convergence_config.plateau_window
+            )
+            logger.info(f"Average change rate: {avg_rate:.2f} lines/iteration")
+
+        logger.info(f"{'='*60}\n")
+
     def _print_summary(self) -> None:
         """Print a summary of the improvement session."""
         logger.info(f"\n{'='*60}")

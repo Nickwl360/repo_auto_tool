@@ -12,6 +12,13 @@ from .agents import (
     create_agent,
 )
 from .config import ImproverConfig
+from .convergence import (
+    ChangeMetrics,
+    ChangeTracker,
+    ConvergenceConfig,
+    ConvergenceDetector,
+    ConvergenceState,
+)
 from .exceptions import (
     ClaudeInterfaceError,
     ClaudeNotFoundError,
@@ -35,6 +42,13 @@ from .exceptions import (
 )
 from .improver import RepoImprover
 from .logging import JSONFormatter, setup_logging
+from .safety import (
+    DangerousCommand,
+    DangerousCommandDetector,
+    SafetyManager,
+    SecretMatch,
+    SecretsRedactor,
+)
 from .state import ImprovementState
 
 __version__ = "0.1.0"
@@ -51,6 +65,18 @@ __all__ = [
     "GoalDecomposerAgent",
     "ReviewerAgent",
     "create_agent",
+    # Safety
+    "SafetyManager",
+    "SecretsRedactor",
+    "DangerousCommandDetector",
+    "SecretMatch",
+    "DangerousCommand",
+    # Convergence
+    "ConvergenceDetector",
+    "ConvergenceConfig",
+    "ConvergenceState",
+    "ChangeTracker",
+    "ChangeMetrics",
     # Logging
     "setup_logging",
     "JSONFormatter",
