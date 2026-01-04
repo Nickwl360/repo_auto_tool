@@ -113,6 +113,9 @@ class ImproverConfig:
     model: str | None = None  # Use default if None
     smart_model_selection: bool = False  # Auto-select model based on task complexity
 
+    # Cost budget (None = unlimited)
+    max_cost: float | None = None  # Maximum cost in USD before stopping
+
     # Validation settings
     run_tests: bool = True  # Smart detection skips if no test files found
     test_command: str = "pytest"
@@ -175,6 +178,7 @@ class ImproverConfig:
         self._validate_iteration_limits()
         self._validate_goal()
         self._validate_log_level()
+        self._validate_max_cost()
 
     def _validate_repo_path(self) -> None:
         """Validate that repo_path exists and is a directory."""
@@ -224,3 +228,20 @@ class ImproverConfig:
             )
         # Normalize to uppercase
         self.log_level = level_upper
+
+    def _validate_max_cost(self) -> None:
+        """Validate the max_cost budget setting."""
+        if self.max_cost is None:
+            return  # No budget limit is valid
+        if not isinstance(self.max_cost, (int, float)):
+            raise InvalidConfigValueError(
+                "max_cost",
+                self.max_cost,
+                "Must be a number (e.g., 5.00 for $5.00)"
+            )
+        if self.max_cost <= 0:
+            raise InvalidConfigValueError(
+                "max_cost",
+                self.max_cost,
+                "Must be a positive number (e.g., 5.00 for $5.00)"
+            )

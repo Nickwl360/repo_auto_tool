@@ -64,7 +64,7 @@
 #### Advanced
 - [x] Multi-model support (use different models for analysis vs editing) -- `--smart-model-selection` flag
 - [x] Parallel validation (run tests and lint simultaneously) -- `--parallel-validation` flag
-- [ ] Cost budgeting (`--max-cost $5.00`)
+- [x] Cost budgeting (`--max-cost $5.00`)
 - [ ] Learning from past sessions (what worked well?)
 
 ---

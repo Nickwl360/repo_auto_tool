@@ -10,7 +10,7 @@ from .convergence import (
     ConvergenceDetector,
     ConvergenceState,
 )
-from .exceptions import GitNotInitializedError
+from .exceptions import CostLimitExceededError, GitNotInitializedError
 from .git_helper import GitHelper
 from .model_selector import ModelSelector
 from .prompt_adapter import PromptAdapter
@@ -418,6 +418,8 @@ Do NOT simply revert - try to fix the problems properly.
         logger.info(f"  Repository: {self.config.repo_path}")
         logger.info(f"  Goal: {self.config.goal}")
         logger.info(f"  Max iterations: {self.config.max_iterations}")
+        if self.config.max_cost is not None:
+            logger.info(f"  Cost budget: ${self.config.max_cost:.2f}")
         
         # Setup git branch
         if self.git:
@@ -440,6 +442,20 @@ Do NOT simply revert - try to fix the problems properly.
                 # Check if already complete
                 if self.state.status == "completed":
                     logger.info("Goal already completed!")
+                    break
+
+                # Check cost budget before each iteration
+                try:
+                    self._check_cost_limit()
+                except CostLimitExceededError as e:
+                    logger.warning(
+                        f"Cost limit reached: ${e.current_cost:.4f} >= ${e.max_cost:.2f}"
+                    )
+                    logger.info(
+                        "Session paused. Resume with --resume and higher --max-cost."
+                    )
+                    self.state.status = "paused"
+                    self.state.summary = f"Cost limit reached: ${e.current_cost:.4f}"
                     break
 
                 # Check convergence before each iteration
@@ -562,6 +578,12 @@ Do NOT simply revert - try to fix the problems properly.
         if cost > 0:
             logger.info(f"  Est. cost:     ${cost:.4f}")
 
+            # Show budget info if max_cost is set
+            if self.config.max_cost is not None:
+                remaining = self.config.max_cost - cost
+                pct_used = (cost / self.config.max_cost) * 100
+                logger.info(f"  Budget used:   {pct_used:.1f}% (${remaining:.2f} remaining)")
+
     def _estimate_cost(self, token_summary: dict[str, int]) -> float:
         """Estimate API cost based on token usage.
 
@@ -603,3 +625,28 @@ Do NOT simply revert - try to fix the problems properly.
         cache_cost = (cache_read_tokens / 1_000_000) * cache_read_cost_per_mtok
 
         return input_cost + output_cost + cache_cost
+
+    def get_current_cost(self) -> float:
+        """Get the current estimated cost of the session.
+
+        Returns:
+            Estimated cost in USD based on token usage so far.
+        """
+        return self._estimate_cost(self.state.get_token_summary())
+
+    def _check_cost_limit(self) -> None:
+        """Check if the current cost exceeds the configured maximum.
+
+        Raises:
+            CostLimitExceededError: If max_cost is set and current cost exceeds it.
+        """
+        if self.config.max_cost is None:
+            return  # No limit set
+
+        current_cost = self.get_current_cost()
+        if current_cost >= self.config.max_cost:
+            raise CostLimitExceededError(
+                current_cost=current_cost,
+                max_cost=self.config.max_cost,
+                tokens_used=self.state.total_tokens,
+            )

@@ -23,6 +23,8 @@ Exception Hierarchy:
     +-- GitError
     |   +-- GitNotInitializedError
     |   +-- GitOperationError
+    +-- BudgetError
+        +-- CostLimitExceededError
 """
 
 from pathlib import Path
@@ -244,4 +246,32 @@ class GitOperationError(GitError):
         super().__init__(
             f"Git {operation} failed: {reason}",
             details=details
+        )
+
+
+# Budget/Cost Errors
+
+class BudgetError(RepoAutoToolError):
+    """Base exception for budget-related errors."""
+    pass
+
+
+class CostLimitExceededError(BudgetError):
+    """Raised when the session cost exceeds the configured maximum.
+
+    This is a graceful stop condition, not a failure. The session can
+    be resumed later if the user increases the budget.
+    """
+
+    def __init__(self, current_cost: float, max_cost: float, tokens_used: int):
+        self.current_cost = current_cost
+        self.max_cost = max_cost
+        self.tokens_used = tokens_used
+        super().__init__(
+            f"Cost limit exceeded: ${current_cost:.4f} >= ${max_cost:.2f}",
+            details={
+                "current_cost": current_cost,
+                "max_cost": max_cost,
+                "tokens_used": tokens_used,
+            }
         )

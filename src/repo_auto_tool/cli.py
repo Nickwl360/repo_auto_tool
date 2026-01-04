@@ -277,6 +277,14 @@ Examples:
         help="Claude model to use (e.g., claude-sonnet-4-20250514). Overrides smart selection.",
     )
 
+    parser.add_argument(
+        "--max-cost",
+        type=float,
+        default=None,
+        metavar="DOLLARS",
+        help="Maximum cost in USD before stopping (e.g., --max-cost 5.00 for $5 budget)",
+    )
+
     args = parser.parse_args()
     
     # Validate arguments
@@ -316,6 +324,7 @@ Examples:
         state_dir=args.state_dir,
         model=args.model,
         smart_model_selection=args.smart_model_selection,
+        max_cost=args.max_cost,
         goal_type=args.goal_type,
         checkpoint_interval=args.checkpoint_interval,
         early_stop_enabled=not args.no_early_stop,

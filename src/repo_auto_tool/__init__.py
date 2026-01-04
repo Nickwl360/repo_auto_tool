@@ -22,11 +22,13 @@ from .convergence import (
     ConvergenceState,
 )
 from .exceptions import (
+    BudgetError,
     ClaudeInterfaceError,
     ClaudeNotFoundError,
     ClaudeResponseError,
     ClaudeTimeoutError,
     ConfigurationError,
+    CostLimitExceededError,
     GitError,
     GitNotInitializedError,
     GitOperationError,
@@ -167,6 +169,9 @@ __all__ = [
     "GitError",
     "GitNotInitializedError",
     "GitOperationError",
+    # Budget errors
+    "BudgetError",
+    "CostLimitExceededError",
     # Validators
     "Validator",
     "CommandValidator",
