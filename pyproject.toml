@@ -36,8 +36,10 @@ dev = [
 repo-auto-tool = "repo_auto_tool.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/nick/repo-improver"
-Repository = "https://github.com/nick/repo-improver"
+Homepage = "https://github.com/nick/repo-auto-tool"
+Repository = "https://github.com/nick/repo-auto-tool"
+Documentation = "https://github.com/nick/repo-auto-tool#readme"
+Issues = "https://github.com/nick/repo-auto-tool/issues"
 
 [tool.hatch.build]
 # Use src-layout: package lives in src/ but installs as repo_auto_tool

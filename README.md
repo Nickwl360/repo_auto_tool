@@ -1,4 +1,4 @@
-# repo-improver
+# repo-auto-tool
 
 **Continuously improve a codebase toward a goal using Claude Code CLI.**
 
@@ -15,12 +15,12 @@ This tool creates an agentic loop that:
 # Prerequisites: Claude Code CLI
 npm install -g @anthropic-ai/claude-code
 
-# Install repo-improver
-pip install repo-improver
+# Install repo-auto-tool
+pip install repo-auto-tool
 
 # Or from source
-git clone https://github.com/nick/repo-improver
-cd repo-improver
+git clone https://github.com/nick/repo-auto-tool
+cd repo-auto-tool
 pip install -e .
 ```
 
@@ -28,14 +28,14 @@ pip install -e .
 
 ```bash
 # Basic usage
-repo-improver /path/to/your/repo "Add comprehensive docstrings to all public functions"
+repo-auto-tool /path/to/your/repo "Add comprehensive docstrings to all public functions"
 
 # From within the repo
 cd my-project
-repo-improver . "Refactor the utils module for better separation of concerns"
+repo-auto-tool . "Refactor the utils module for better separation of concerns"
 
 # Just analyze (no changes)
-repo-improver . "Improve test coverage" --analyze-only
+repo-auto-tool . "Improve test coverage" --analyze-only
 ```
 
 ## How It Works
@@ -73,7 +73,7 @@ repo-improver . "Improve test coverage" --analyze-only
 ### CLI Options
 
 ```bash
-repo-improver [REPO_PATH] "GOAL" [OPTIONS]
+repo-auto-tool [REPO_PATH] "GOAL" [OPTIONS]
 
 Arguments:
   REPO_PATH           Path to repository (default: current directory)
@@ -101,7 +101,7 @@ Options:
 ### Python API
 
 ```python
-from repo_improver import RepoImprover, ImproverConfig
+from repo_auto_tool import RepoImprover, ImproverConfig
 
 config = ImproverConfig(
     repo_path="/path/to/project",
@@ -128,8 +128,8 @@ print(f"Summary: {result.summary}")
 ### Advanced: Custom Validators
 
 ```python
-from repo_improver import RepoImprover, ImproverConfig
-from repo_improver.validators import CommandValidator, ValidationPipeline
+from repo_auto_tool import RepoImprover, ImproverConfig
+from repo_auto_tool.validators import CommandValidator, ValidationPipeline
 
 config = ImproverConfig(
     repo_path=".",
@@ -185,11 +185,11 @@ The tool saves state to `.repo-improver-state.json` after each iteration:
 
 ```bash
 # Session interrupted or max iterations reached
-repo-improver . "big refactoring goal"
+repo-auto-tool . "big refactoring goal"
 # ... runs for a while, you hit Ctrl+C
 
 # Resume later
-repo-improver . --resume
+repo-auto-tool . --resume
 ```
 
 ## Git Safety
@@ -213,7 +213,7 @@ git merge repo-improver/auto
 
 ## How Claude Code Edits Files
 
-When `repo-improver` calls Claude Code with:
+When `repo-auto-tool` calls Claude Code with:
 ```bash
 claude -p "Add docstring to function X in file.py" \
   --allowedTools "Edit(*),Write(*),Read(*)" \
@@ -226,15 +226,20 @@ Claude Code directly edits `/path/to/repo/file.py` using its `Edit` tool. The `-
 ## Architecture
 
 ```
-repo_improver/
-├── __init__.py          # Package exports
+repo_auto_tool/
+├── __init__.py          # Package exports and version
 ├── cli.py               # Command-line interface
-├── config.py            # Configuration dataclass
+├── config.py            # Configuration dataclass with validation
 ├── improver.py          # Main orchestration loop
-├── claude_interface.py  # Claude Code CLI wrapper
-├── validators.py        # Test/lint validation
-├── git_helper.py        # Git operations
-└── state.py             # Persistent state management
+├── claude_interface.py  # Claude Code CLI wrapper with retry logic
+├── validators.py        # Test/lint validation pipeline
+├── git_helper.py        # Safe git operations (branch, commit, rollback)
+├── state.py             # Persistent session state for resumability
+├── agents.py            # Specialized agents (pre-analysis, decomposer, reviewer)
+├── convergence.py       # Convergence detection to avoid infinite loops
+├── safety.py            # Secret redaction and dangerous command detection
+├── logging.py           # Structured JSON and console logging
+└── exceptions.py        # Hierarchical custom exceptions
 ```
 
 ## Requirements
