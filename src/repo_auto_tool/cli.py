@@ -285,6 +285,12 @@ Examples:
         help="Maximum cost in USD before stopping (e.g., --max-cost 5.00 for $5 budget)",
     )
 
+    parser.add_argument(
+        "--show-metrics",
+        action="store_true",
+        help="Show detailed session metrics report at the end of the run",
+    )
+
     args = parser.parse_args()
     
     # Validate arguments
@@ -348,14 +354,18 @@ Examples:
 
     # Run
     improver = RepoImprover(config)
-    
+
     if args.analyze_only:
         analysis = improver.analyze()
         print(analysis)
         return 0
-    
+
     result = improver.run()
-    
+
+    # Show detailed metrics if requested
+    if args.show_metrics:
+        improver.print_metrics_report()
+
     # Exit code based on result
     if result.status == "completed":
         return 0

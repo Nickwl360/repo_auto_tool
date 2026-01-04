@@ -15,6 +15,7 @@ from .git_helper import GitHelper
 from .model_selector import ModelSelector
 from .prompt_adapter import PromptAdapter
 from .safety import SafetyManager
+from .session_metrics import SessionMetrics
 from .state import ImprovementState
 from .validators import CommandValidator, ValidationPipeline
 
@@ -545,6 +546,28 @@ Do NOT simply revert - try to fix the problems properly.
         if self.git:
             logger.info(f"Changes on branch: {self.git.branch_name}")
             logger.info(f"Diff summary:\n{self.git.get_diff_summary()}")
+
+    def get_session_metrics(self) -> SessionMetrics:
+        """Get comprehensive metrics for the current session.
+
+        Returns:
+            SessionMetrics object with detailed analytics about the session
+            including success rates, efficiency metrics, and failure analysis.
+        """
+        return SessionMetrics.from_state(
+            state=self.state,
+            model=self.config.model,
+        )
+
+    def print_metrics_report(self) -> None:
+        """Print a detailed metrics report to the logger.
+
+        Generates and logs a comprehensive report of session metrics
+        including success rates, token efficiency, cost analysis, and
+        failure pattern analysis.
+        """
+        metrics = self.get_session_metrics()
+        logger.info(metrics.format_report())
 
     def _print_token_summary(self) -> None:
         """Print token usage and estimated cost summary.
