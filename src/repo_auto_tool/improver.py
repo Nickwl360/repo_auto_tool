@@ -15,6 +15,7 @@ from .git_helper import GitHelper
 from .model_selector import ModelSelector
 from .prompt_adapter import PromptAdapter
 from .safety import SafetyManager
+from .session_history import SessionHistory
 from .session_metrics import SessionMetrics
 from .state import ImprovementState
 from .validators import CommandValidator, ValidationPipeline
@@ -146,9 +147,36 @@ Do NOT simply revert - try to fix the problems properly.
             [it.to_dict() for it in self.state.iterations]
         )
 
+        # Load cross-session history for learning from past sessions
+        self.session_history = SessionHistory.load(config.repo_path)
+        self._apply_historical_learnings()
+
         # Setup logging
         self._setup_logging()
-    
+
+    def _apply_historical_learnings(self) -> None:
+        """Apply learnings from past sessions to the prompt adapter.
+
+        Loads historical error patterns and successful fixes,
+        adding them as custom guidance to help avoid past mistakes.
+        """
+        guidance_items = self.session_history.get_guidance_for_prompt_adapter()
+
+        for error_type, guidance_text, threshold in guidance_items:
+            self.prompt_adapter.add_custom_guidance(
+                error_type=error_type,
+                guidance=guidance_text,
+                threshold=threshold,
+                priority=4,  # Slightly lower than default guidance
+            )
+
+        stats = self.session_history.get_stats()
+        if stats["sessions_tracked"] > 0:
+            logger.info(
+                f"Applied historical learnings: {stats['sessions_tracked']} past sessions, "
+                f"{stats['total_fixes_recorded']} recorded fixes"
+            )
+
     def _setup_logging(self) -> None:
         """Configure logging."""
         level = logging.DEBUG if self.config.verbose else logging.INFO
@@ -490,11 +518,14 @@ Do NOT simply revert - try to fix the problems properly.
         
         finally:
             self.state.save(self.config.state_file)
-            
+
+            # Save session learnings to history for future sessions
+            self._save_session_history()
+
             if self.git and self.state.status != "completed":
                 # Optionally restore original branch on non-completion
                 pass
-        
+
         # Final summary
         self._print_summary()
         
@@ -525,6 +556,25 @@ Do NOT simply revert - try to fix the problems properly.
             logger.info(f"Average change rate: {avg_rate:.2f} lines/iteration")
 
         logger.info(f"{'='*60}\n")
+
+    def _save_session_history(self) -> None:
+        """Save session learnings to persistent history.
+
+        Records error patterns, successful fixes, and session outcomes
+        to help improve future sessions on this repository.
+        """
+        try:
+            self.session_history.record_session(self.state)
+            self.session_history.save()
+
+            stats = self.session_history.get_stats()
+            logger.info(
+                f"Session history updated: {stats['sessions_tracked']} total sessions, "
+                f"{stats['total_fixes_recorded']} recorded fixes"
+            )
+        except OSError as e:
+            # Don't fail the session if history can't be saved
+            logger.warning(f"Could not save session history: {e}")
 
     def _print_summary(self) -> None:
         """Print a summary of the improvement session."""

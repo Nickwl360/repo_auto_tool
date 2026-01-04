@@ -66,7 +66,7 @@
 - [x] Parallel validation (run tests and lint simultaneously) -- `--parallel-validation` flag
 - [x] Cost budgeting (`--max-cost $5.00`)
 - [x] Smart context summarization (efficient history-aware context for longer sessions)
-- [ ] Learning from past sessions (what worked well?)
+- [x] Learning from past sessions (what worked well?) -- `SessionHistory` class persists learnings across sessions
 
 ---
 

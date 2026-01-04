@@ -75,6 +75,11 @@ from .safety import (
     SecretMatch,
     SecretsRedactor,
 )
+from .session_history import (
+    ErrorPattern,
+    SessionHistory,
+    SessionSummary,
+)
 from .state import ImprovementState, IterationRecord, StatusType, truncate_text
 from .validators import (
     CommandValidator,
@@ -141,6 +146,10 @@ __all__ = [
     "PromptAdapter",
     "AdaptiveGuidance",
     "FailureRecord",
+    # Session history
+    "SessionHistory",
+    "SessionSummary",
+    "ErrorPattern",
     # Logging
     "setup_logging",
     "get_logger",
