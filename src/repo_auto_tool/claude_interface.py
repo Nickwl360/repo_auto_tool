@@ -357,7 +357,7 @@ class ClaudeCodeInterface:
         cmd = [
             "claude",
             "-p", prompt,                          # Non-interactive prompt mode
-            "--output-format", "json",             # Machine-readable output
+            "--output-format", "stream-json",             # Machine-readable output
             "--dangerously-skip-permissions",      # Auto-accept all tool use
             "--allowedTools", ",".join(self.allowed_tools),
         ]
@@ -382,7 +382,10 @@ class ClaudeCodeInterface:
         prompt_preview: str = "",
         model_used: str | None = None,
     ) -> ClaudeResponse:
-        """Execute a single Claude CLI call without retry logic.
+        """Execute a single Claude CLI call with streaming output.
+
+        Uses Popen to stream output in real-time so users can see what Claude
+        is doing. Parses stream-json format line by line.
 
         Args:
             cmd: The command list to execute.
@@ -392,101 +395,115 @@ class ClaudeCodeInterface:
         Returns:
             ClaudeResponse from this single execution attempt.
         """
+        import sys
+        import threading
+        import time
+
+        collected_output: list[dict[str, Any]] = []
+        result_text = ""
+        final_result: dict[str, Any] = {}
+        stderr_output = ""
+        return_code = 0
+
         try:
-            result = subprocess.run(
+            process = subprocess.Popen(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=self.timeout,
                 cwd=self.working_dir,
             )
 
-            # Parse JSON output - defensive handling for None/empty stdout
-            stdout = result.stdout or ""
-            stderr = result.stderr or ""
+            # Read stderr in background thread
+            def read_stderr():
+                nonlocal stderr_output
+                if process.stderr:
+                    stderr_output = process.stderr.read()
 
-            if stdout.strip():
-                try:
-                    output = json.loads(stdout)
+            stderr_thread = threading.Thread(target=read_stderr)
+            stderr_thread.start()
 
-                    # Handle both dict and list responses defensively
-                    # Claude CLI may return list format in some cases
-                    if isinstance(output, list):
-                        # Extract from list - try to find the main result
-                        output_dict: dict[str, Any] = {}
-                        result_text = ""
-                        for item in output:
-                            if isinstance(item, dict):
-                                # Merge dict items, later items override
-                                output_dict.update(item)
-                                # Look for result text in various fields
-                                if "result" in item:
-                                    result_text = str(item["result"])
-                                elif "message" in item:
-                                    result_text = str(item["message"])
-                                elif "text" in item:
-                                    result_text = str(item["text"])
-                            elif isinstance(item, str) and not result_text:
-                                result_text = item
+            start_time = time.time()
 
-                        # Use extracted dict for metadata
-                        output = output_dict
-                        if not output.get("result") and result_text:
-                            output["result"] = result_text
+            # Stream stdout line by line
+            if process.stdout:
+                for line in process.stdout:
+                    # Check timeout
+                    if time.time() - start_time > self.timeout:
+                        process.kill()
+                        raise subprocess.TimeoutExpired(cmd, self.timeout)
 
-                    # Ensure output is a dict for safe .get() calls
-                    if not isinstance(output, dict):
-                        output = {"result": str(output)}
+                    line = line.strip()
+                    if not line:
+                        continue
 
-                    # Extract session ID for potential resume
-                    self.session_id = output.get("session_id")
+                    try:
+                        data = json.loads(line)
+                        collected_output.append(data)
 
-                    # Parse token usage from the output
-                    usage = _parse_token_usage(output)
-                    if usage.total_tokens > 0:
-                        logger.debug(
-                            f"Token usage: {usage.input_tokens} in, "
-                            f"{usage.output_tokens} out, "
-                            f"{usage.cache_read_tokens} cache read"
-                        )
+                        # Display meaningful updates to the user
+                        msg_type = data.get("type", "")
 
-                    return ClaudeResponse(
-                        success=result.returncode == 0,
-                        result=str(output.get("result") or output.get("message") or str(output)),
-                        raw_output=output,
-                        session_id=self.session_id,
-                        usage=usage,
-                        model_used=model_used,
-                    )
-                except json.JSONDecodeError as e:
-                    # Non-JSON output (shouldn't happen with --output-format json)
-                    logger.warning(f"Failed to parse Claude output as JSON: {e}")
-                    return ClaudeResponse(
-                        success=result.returncode == 0,
-                        result=stdout,
-                        error=f"JSON parse error: {e}" if result.returncode != 0 else None,
-                        model_used=model_used,
-                    )
-                except (TypeError, AttributeError) as e:
-                    # Handle unexpected data structure issues
-                    logger.warning(f"Unexpected data structure in Claude output: {e}")
-                    return ClaudeResponse(
-                        success=result.returncode == 0,
-                        result=stdout,
-                        error=f"Data structure error: {e}" if result.returncode != 0 else None,
-                        model_used=model_used,
-                    )
-            else:
-                error_msg = stderr.strip() if stderr.strip() else "No output from Claude CLI"
-                return ClaudeResponse(
-                    success=False,
-                    result="",
-                    error=error_msg,
-                    model_used=model_used,
-                )
+                        if msg_type == "assistant":
+                            # Claude is thinking/responding
+                            content = data.get("message", {}).get("content", [])
+                            for block in content:
+                                if isinstance(block, dict):
+                                    if block.get("type") == "text":
+                                        text = block.get("text", "")
+                                        if text:
+                                            print(f"  Claude: {text[:200]}...")
+                                            result_text += text + "\n"
+                                    elif block.get("type") == "tool_use":
+                                        tool = block.get("name", "unknown")
+                                        print(f"  [Using tool: {tool}]")
+
+                        elif msg_type == "tool_result":
+                            # Tool completed
+                            pass  # Silent for now
+
+                        elif msg_type == "result":
+                            # Final result
+                            final_result = data
+                            if data.get("result"):
+                                result_text = str(data.get("result"))
+                            self.session_id = data.get("session_id")
+
+                        elif msg_type == "error":
+                            error_msg = data.get("error", {})
+                            if isinstance(error_msg, dict):
+                                print(f"  Error: {error_msg.get('message', 'Unknown')}")
+                            else:
+                                print(f"  Error: {error_msg}")
+
+                        sys.stdout.flush()
+
+                    except json.JSONDecodeError:
+                        # Non-JSON line, might be plain text
+                        if line:
+                            print(f"  {line}")
+
+            # Wait for process and stderr thread
+            return_code = process.wait()
+            stderr_thread.join(timeout=5)
+
+            # Parse final result
+            usage = _parse_token_usage(final_result)
+
+            # If no explicit result text, check if files were changed
+            if not result_text.strip() and return_code == 0:
+                result_text = "Claude completed (check git diff for changes)"
+
+            return ClaudeResponse(
+                success=return_code == 0,
+                result=result_text.strip() or "Completed",
+                raw_output=final_result or {"collected": collected_output},
+                session_id=self.session_id,
+                usage=usage,
+                model_used=model_used,
+            )
 
         except subprocess.TimeoutExpired:
-            # Create a structured timeout error for logging context
             timeout_error = ClaudeTimeoutError(self.timeout, prompt_preview)
             logger.error(str(timeout_error))
             return ClaudeResponse(
@@ -496,7 +513,6 @@ class ClaudeCodeInterface:
                 model_used=model_used,
             )
         except OSError as e:
-            # Handle OS-level errors (permissions, resources, etc.)
             logger.error(f"OS error executing Claude CLI: {e}")
             return ClaudeResponse(
                 success=False,
@@ -505,7 +521,6 @@ class ClaudeCodeInterface:
                 model_used=model_used,
             )
         except Exception as e:
-            # Catch-all for unexpected errors
             logger.exception(f"Unexpected error executing Claude CLI: {e}")
             return ClaudeResponse(
                 success=False,

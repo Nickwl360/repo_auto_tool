@@ -6,7 +6,9 @@
       "Bash(./venv/Scripts/ruff check src/)",
       "Bash(git add:*)",
       "Bash(git stash:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(cat:*)",
+      "Bash(./venv/Scripts/ruff check:*)"
     ]
   }
 }
