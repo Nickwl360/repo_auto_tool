@@ -16,7 +16,7 @@ _REQUIRED_STATE_FIELDS = {"goal", "repo_path", "status"}
 _REQUIRED_ITERATION_FIELDS = {
     "iteration", "timestamp", "prompt", "result", "success", "validation_passed"
 }
-_VALID_STATUSES = {"running", "completed", "failed", "paused", "converged"}
+_VALID_STATUSES: set[str] = {"running", "completed", "failed", "paused", "converged"}
 
 # Context efficiency settings
 MAX_RESULT_LENGTH = 2000  # Max chars to store per iteration result
@@ -100,16 +100,20 @@ class IterationRecord:
         return cls(**filtered_data)
 
 
-@dataclass  
+# Valid status values for improvement sessions
+StatusType = Literal["running", "completed", "failed", "paused", "converged"]
+
+
+@dataclass
 class ImprovementState:
     """
     Persistent state for an improvement session.
-    
+
     Tracks progress, allows resumption, and provides history for context.
     """
     goal: str
     repo_path: str
-    status: Literal["running", "completed", "failed", "paused"] = "running"
+    status: StatusType = "running"
     current_iteration: int = 0
     total_iterations: int = 0
     consecutive_failures: int = 0

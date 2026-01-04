@@ -78,7 +78,12 @@ def _run_agent_mode(args: argparse.Namespace, config: "ImproverConfig") -> int:
     return 0
 
 
-def main():
+def main() -> int:
+    """CLI entry point for repo-improver.
+
+    Returns:
+        Exit code: 0 for success/completion, 1 for failure, 2 for paused/resumable.
+    """
     parser = argparse.ArgumentParser(
         description="Continuously improve a codebase using Claude Code",
         formatter_class=argparse.RawDescriptionHelpFormatter,

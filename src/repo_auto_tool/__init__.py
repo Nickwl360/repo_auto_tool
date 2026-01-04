@@ -49,7 +49,7 @@ from .safety import (
     SecretMatch,
     SecretsRedactor,
 )
-from .state import ImprovementState, truncate_text
+from .state import ImprovementState, StatusType, truncate_text
 
 __version__ = "0.1.0"
 __all__ = [
@@ -57,6 +57,7 @@ __all__ = [
     "RepoImprover",
     "ImproverConfig",
     "ImprovementState",
+    "StatusType",
     # Utilities
     "find_venv_path",
     "get_venv_command",
