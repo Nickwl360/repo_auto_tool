@@ -17,6 +17,7 @@ from .foreign_repo import (
 from .improver import RepoImprover
 from .logging import setup_logging
 from .prompt_parser import ParsedPrompt, PromptParser
+from .tui import TUI, TUIConfig, create_tui, setup_tui_logging
 
 # Global manager for cleanup on exit
 _foreign_repo_manager: ForeignRepoManager | None = None
@@ -369,6 +370,21 @@ Examples:
         help="Show detailed session metrics report at the end of the run",
     )
 
+    # TUI settings
+    parser.add_argument(
+        "--no-tui",
+        action="store_true",
+        help="Disable the interactive terminal UI (use enhanced plain text mode instead)",
+    )
+
+    parser.add_argument(
+        "--tui-refresh-rate",
+        type=float,
+        default=0.5,
+        metavar="SECONDS",
+        help="TUI refresh rate in seconds (default: 0.5)",
+    )
+
     # Foreign repository options
     parser.add_argument(
         "--workspace-dir",
@@ -712,7 +728,72 @@ Examples:
             return 1
 
     # Standard execution (or fix/refactor modes which use standard loop)
-    result = improver.run()
+    # Initialize TUI if requested and available
+    tui: TUI | None = None
+    tui_log_handler = None
+
+    try:
+        # Create TUI unless disabled or in quiet/json mode
+        use_tui = not args.no_tui and not args.quiet and not args.json
+        if use_tui:
+            try:
+                tui_config = TUIConfig(
+                    refresh_rate=max(0.1, min(5.0, args.tui_refresh_rate)),
+                    enable_colors=True,
+                )
+                tui = create_tui(use_tui=True, config=tui_config)
+                if tui:
+                    # Setup TUI logging
+                    import logging
+                    tui_log_handler = setup_tui_logging(tui, logging.INFO)
+
+                    # Initialize TUI state
+                    tui.set_goal(goal)
+                    tui.set_iteration(0, args.max_iterations)
+                    tui.set_status("initializing")
+                    tui.add_log("Starting repo-improver...")
+
+                    # Start TUI update thread
+                    tui.start()
+            except Exception as e:
+                # TUI initialization failed - continue without it
+                if not args.quiet:
+                    print(f"Note: TUI unavailable ({e}), using standard output")
+                tui = None
+
+        # Run the improver
+        result = improver.run()
+
+        # Update TUI with final status
+        if tui:
+            try:
+                if result.status == "completed":
+                    tui.set_status("complete")
+                    tui.add_log("Goal complete!")
+                elif result.status == "paused":
+                    tui.set_status("paused")
+                    tui.add_log("Session paused - can be resumed")
+                else:
+                    tui.set_status("failed")
+                    tui.add_log(f"Finished with status: {result.status}")
+                tui.render_once()
+            except Exception:
+                pass
+
+    finally:
+        # Clean up TUI
+        if tui:
+            try:
+                tui.stop()
+                tui.cleanup()
+            except Exception:
+                pass
+        if tui_log_handler:
+            try:
+                import logging
+                logging.getLogger().removeHandler(tui_log_handler)
+            except Exception:
+                pass
 
     # Show detailed metrics if requested
     if args.show_metrics:

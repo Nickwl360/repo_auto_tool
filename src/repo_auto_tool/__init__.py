@@ -110,6 +110,19 @@ from .smart_defaults import (
     get_validation_commands,
 )
 from .state import ImprovementState, IterationRecord, StatusType, truncate_text
+from .tui import (
+    TUI,
+    KeyAction,
+    PanelType,
+    TUIConfig,
+    TUIError,
+    TUILogHandler,
+    TUINotAvailableError,
+    TUIState,
+    create_plain_text_tui,
+    create_tui,
+    setup_tui_logging,
+)
 from .validators import (
     CommandValidator,
     LintValidator,
@@ -266,4 +279,16 @@ __all__ = [
     "FileWatcher",
     "FileState",
     "run_watch_mode",
+    # TUI
+    "TUI",
+    "TUIConfig",
+    "TUIState",
+    "TUIError",
+    "TUINotAvailableError",
+    "TUILogHandler",
+    "KeyAction",
+    "PanelType",
+    "create_tui",
+    "create_plain_text_tui",
+    "setup_tui_logging",
 ]
