@@ -4,6 +4,7 @@ import json
 import logging
 import random
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -124,6 +125,7 @@ class ClaudeCodeInterface:
         allowed_tools: list[str] | None = None,
         model: str | None = None,
         timeout: int = 600,
+        max_retries: int = DEFAULT_MAX_RETRIES,
     ):
         self.working_dir = Path(working_dir).resolve()
         self.allowed_tools = allowed_tools or [
@@ -136,8 +138,9 @@ class ClaudeCodeInterface:
         ]
         self.model = model
         self.timeout = timeout
+        self.max_retries = max_retries
         self.session_id: str | None = None
-        
+
         self._verify_cli()
     
     def _verify_cli(self) -> None:
@@ -184,49 +187,34 @@ class ClaudeCodeInterface:
 
         return cmd
     
-    def call(
+    def _execute_single_call(
         self,
-        prompt: str,
-        context: str | None = None,
-        max_turns: int | None = None,
-        resume: bool = False,
+        cmd: list[str],
     ) -> ClaudeResponse:
-        """
-        Make a single call to Claude Code CLI.
-        
-        Claude WILL edit files in working_dir when instructed.
-        
+        """Execute a single Claude CLI call without retry logic.
+
         Args:
-            prompt: The instruction/prompt to send
-            context: Optional context to prepend
-            max_turns: Limit agentic turns (None = unlimited)
-            resume: Continue from previous session
-            
+            cmd: The command list to execute.
+
         Returns:
-            ClaudeResponse with results
+            ClaudeResponse from this single execution attempt.
         """
-        full_prompt = f"{context}\n\n{prompt}" if context else prompt
-        cmd = self._build_command(full_prompt, max_turns, resume)
-        
-        logger.debug(f"Executing: {' '.join(cmd)}")
-        logger.info(f"Prompt: {prompt[:100]}...")
-        
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
-                cwd=self.working_dir,  # Also set cwd for subprocess
+                cwd=self.working_dir,
             )
-            
+
             # Parse JSON output
             if result.stdout.strip():
                 try:
                     output = json.loads(result.stdout)
                     # Extract session ID for potential resume
                     self.session_id = output.get("session_id")
-                    
+
                     return ClaudeResponse(
                         success=result.returncode == 0,
                         result=output.get("result", output.get("message", str(output))),
@@ -245,7 +233,7 @@ class ClaudeCodeInterface:
                     result="",
                     error=result.stderr or "No output from Claude CLI",
                 )
-                
+
         except subprocess.TimeoutExpired:
             return ClaudeResponse(
                 success=False,
@@ -258,6 +246,73 @@ class ClaudeCodeInterface:
                 result="",
                 error=str(e),
             )
+
+    def call(
+        self,
+        prompt: str,
+        context: str | None = None,
+        max_turns: int | None = None,
+        resume: bool = False,
+    ) -> ClaudeResponse:
+        """Make a call to Claude Code CLI with automatic retry for transient errors.
+
+        Claude WILL edit files in working_dir when instructed.
+        Uses exponential backoff with jitter for retries on transient failures.
+
+        Args:
+            prompt: The instruction/prompt to send.
+            context: Optional context to prepend.
+            max_turns: Limit agentic turns (None = unlimited).
+            resume: Continue from previous session.
+
+        Returns:
+            ClaudeResponse with results.
+        """
+        full_prompt = f"{context}\n\n{prompt}" if context else prompt
+        cmd = self._build_command(full_prompt, max_turns, resume)
+
+        logger.debug(f"Executing: {' '.join(cmd)}")
+        logger.info(f"Prompt: {prompt[:100]}...")
+
+        last_response: ClaudeResponse | None = None
+
+        for attempt in range(self.max_retries + 1):
+            response = self._execute_single_call(cmd)
+
+            # Success - return immediately
+            if response.success:
+                if attempt > 0:
+                    logger.info(f"Call succeeded on retry attempt {attempt}")
+                return response
+
+            # Check if this is a retryable error
+            if not _is_retryable_error(response.error, None):
+                # Non-retryable error - return immediately
+                logger.debug(f"Non-retryable error: {response.error}")
+                return response
+
+            last_response = response
+
+            # Check if we have retries remaining
+            if attempt < self.max_retries:
+                delay = _calculate_backoff_delay(attempt)
+                logger.warning(
+                    f"Transient error on attempt {attempt + 1}/{self.max_retries + 1}: "
+                    f"{response.error}. Retrying in {delay:.1f}s..."
+                )
+                time.sleep(delay)
+            else:
+                logger.error(
+                    f"All {self.max_retries + 1} attempts failed. "
+                    f"Last error: {response.error}"
+                )
+
+        # Return the last failed response
+        return last_response or ClaudeResponse(
+            success=False,
+            result="",
+            error="All retry attempts exhausted",
+        )
     
     def analyze(self, question: str) -> ClaudeResponse:
         """Ask Claude to analyze the repo without making changes."""
