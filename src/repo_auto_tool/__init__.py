@@ -2,6 +2,15 @@
 repo-improver: Continuously improve a codebase toward a goal using Claude Code CLI.
 """
 
+from .agents import (
+    Agent,
+    AgentMode,
+    AgentResult,
+    GoalDecomposerAgent,
+    PreAnalysisAgent,
+    ReviewerAgent,
+    create_agent,
+)
 from .config import ImproverConfig
 from .exceptions import (
     ClaudeInterfaceError,
@@ -34,6 +43,14 @@ __all__ = [
     "RepoImprover",
     "ImproverConfig",
     "ImprovementState",
+    # Agents
+    "Agent",
+    "AgentMode",
+    "AgentResult",
+    "PreAnalysisAgent",
+    "GoalDecomposerAgent",
+    "ReviewerAgent",
+    "create_agent",
     # Logging
     "setup_logging",
     "JSONFormatter",

@@ -4,9 +4,78 @@ import argparse
 import sys
 from pathlib import Path
 
+from .agents import AgentMode, create_agent
 from .config import ImproverConfig
 from .improver import RepoImprover
 from .logging import setup_logging
+
+
+def _run_agent_mode(args: argparse.Namespace, config: "ImproverConfig") -> int:
+    """Run in agent mode and return exit code.
+
+    Args:
+        args: Parsed command line arguments
+        config: Improver configuration
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    import json as json_module
+
+    mode: AgentMode = args.agent_mode
+    agent = create_agent(
+        mode=mode,
+        working_dir=args.repo_path,
+        timeout=600,
+    )
+
+    if mode == "pre-analysis":
+        result = agent.run()
+    elif mode == "goal-decomposer":
+        if not args.goal:
+            print("Error: --agent-mode goal-decomposer requires a goal", file=sys.stderr)
+            return 1
+        result = agent.run(goal=args.goal)
+    elif mode == "reviewer":
+        if not args.goal:
+            print("Error: --agent-mode reviewer requires a goal", file=sys.stderr)
+            return 1
+        # For reviewer, use goal as both goal and task for now
+        result = agent.run(goal=args.goal, task=args.goal)
+    else:
+        print(f"Error: Unknown agent mode '{mode}'", file=sys.stderr)
+        return 1
+
+    if not result.success:
+        print(f"Agent failed: {result.error}", file=sys.stderr)
+        return 1
+
+    # Output results
+    if args.json:
+        output = {
+            "mode": mode,
+            "success": result.success,
+            "output": result.output,
+            "suggestions": result.suggestions,
+            "steps": result.steps,
+            "metadata": result.metadata,
+        }
+        print(json_module.dumps(output, indent=2))
+    else:
+        print(f"\n=== {agent.name} Results ===\n")
+        print(result.output)
+
+        if result.suggestions:
+            print("\n--- Suggestions ---")
+            for i, suggestion in enumerate(result.suggestions, 1):
+                print(f"  {i}. {suggestion}")
+
+        if result.steps:
+            print("\n--- Steps ---")
+            for i, step in enumerate(result.steps, 1):
+                print(f"  {i}. {step}")
+
+    return 0
 
 
 def main():
@@ -112,6 +181,15 @@ Examples:
         action="store_true",
         help="Resume from previous session state",
     )
+
+    parser.add_argument(
+        "--agent-mode",
+        type=str,
+        choices=["pre-analysis", "goal-decomposer", "reviewer"],
+        metavar="MODE",
+        help="Run in agent mode: pre-analysis (analyze and suggest goals), "
+             "goal-decomposer (break goal into steps), reviewer (review changes)",
+    )
     
     # Output settings
     parser.add_argument(
@@ -145,8 +223,13 @@ Examples:
     args = parser.parse_args()
     
     # Validate arguments
+    # Goal not required for pre-analysis mode or analyze-only
     if not args.resume and not args.goal and not args.analyze_only:
-        parser.error("Goal is required unless using --resume or --analyze-only")
+        if args.agent_mode != "pre-analysis":
+            parser.error(
+                "Goal is required unless using --resume, --analyze-only, "
+                "or --agent-mode pre-analysis"
+            )
     
     # Check for existing state if resuming
     state_file = args.repo_path / ".repo-improver-state.json"
@@ -185,6 +268,10 @@ Examples:
         console_output=config.verbose,
         json_format=config.output_format == "json",
     )
+
+    # Handle agent modes
+    if args.agent_mode:
+        return _run_agent_mode(args, config)
 
     # Run
     improver = RepoImprover(config)
