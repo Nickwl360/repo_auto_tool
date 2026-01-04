@@ -260,6 +260,19 @@ Examples:
         help="Disable early stopping when convergence detected",
     )
 
+    parser.add_argument(
+        "--smart-model-selection",
+        action="store_true",
+        help="Auto-select model based on task complexity (Haiku for simple tasks)",
+    )
+
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help="Claude model to use (e.g., claude-sonnet-4-20250514). Overrides smart selection.",
+    )
+
     args = parser.parse_args()
     
     # Validate arguments
@@ -297,6 +310,8 @@ Examples:
         use_git=not args.no_git,
         branch_name=args.branch,
         state_dir=args.state_dir,
+        model=args.model,
+        smart_model_selection=args.smart_model_selection,
         goal_type=args.goal_type,
         checkpoint_interval=args.checkpoint_interval,
         early_stop_enabled=not args.no_early_stop,

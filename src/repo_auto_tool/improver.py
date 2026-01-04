@@ -12,6 +12,7 @@ from .convergence import (
 )
 from .exceptions import GitNotInitializedError
 from .git_helper import GitHelper
+from .model_selector import ModelSelector
 from .safety import SafetyManager
 from .state import ImprovementState
 from .validators import CommandValidator, ValidationPipeline
@@ -125,6 +126,12 @@ Do NOT simply revert - try to fix the problems properly.
             detect_dangerous=True,
         )
 
+        # Initialize model selector for smart model selection
+        # If user specified a model, use it as override (disables smart selection)
+        self.model_selector = ModelSelector(
+            override_model=config.model if not config.smart_model_selection else None,
+        ) if config.smart_model_selection else None
+
         # Initialize convergence detection components
         self.convergence_config = ConvergenceConfig()
         self.convergence_detector = ConvergenceDetector(self.convergence_config)
@@ -208,13 +215,24 @@ Do NOT simply revert - try to fix the problems properly.
     def analyze(self) -> str:
         """Analyze the current state of the repo vs the goal."""
         logger.info("Analyzing repository...")
-        
+
+        # Use smart model selection if enabled
+        model_override = None
+        if self.model_selector:
+            prompt = self.ANALYZE_PROMPT.format(goal=self.config.goal)
+            choice = self.model_selector.select_model(prompt, task_type="analyze")
+            model_override = choice.model
+            logger.info(f"Smart model selection: {choice.reason} -> {choice.model}")
+
         response = self.claude.analyze(
-            self.ANALYZE_PROMPT.format(goal=self.config.goal)
+            self.ANALYZE_PROMPT.format(goal=self.config.goal),
+            model_override=model_override,
         )
-        
+
         if response.success:
             logger.info("Analysis complete")
+            if response.model_used:
+                logger.debug(f"Used model: {response.model_used}")
             return response.result
         else:
             logger.error(f"Analysis failed: {response.error}")
@@ -235,27 +253,37 @@ Do NOT simply revert - try to fix the problems properly.
     def _run_iteration(self) -> bool:
         """
         Run a single improvement iteration.
-        
+
         Returns True if iteration was successful.
         """
         iteration_num = self.state.current_iteration + 1
         logger.info(f"\n{'='*60}")
         logger.info(f"ITERATION {iteration_num}")
         logger.info(f"{'='*60}")
-        
+
         # Determine what to do
         task = self._determine_next_task()
         context = self.state.get_recent_context()
-        
+
         prompt = self.IMPROVE_PROMPT.format(
             goal=self.config.goal,
             context=context,
             task=task,
         )
-        
+
+        # Use smart model selection if enabled
+        model_override = None
+        if self.model_selector:
+            # Determine task type based on recent failures
+            task_type = "fix" if "fix" in task.lower() else "improve"
+            choice = self.model_selector.select_model(prompt, context, task_type)
+            model_override = choice.model
+            logger.info(f"Smart model selection: {choice.reason}")
+            logger.debug(f"  Complexity: {choice.complexity.value}, Model: {choice.model}")
+
         # Ask Claude to make improvements
         logger.info("Requesting improvements from Claude...")
-        response = self.claude.improve(prompt, max_turns=10)
+        response = self.claude.improve(prompt, max_turns=10, model_override=model_override)
         
         if not response.success:
             logger.error(f"Claude call failed: {response.error}")

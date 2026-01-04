@@ -111,6 +111,7 @@ class ImproverConfig:
         "Bash(*)", "Read(*)", "Edit(*)", "Write(*)", "Glob(*)", "Grep(*)"
     ])
     model: str | None = None  # Use default if None
+    smart_model_selection: bool = False  # Auto-select model based on task complexity
 
     # Validation settings
     run_tests: bool = True  # Smart detection skips if no test files found

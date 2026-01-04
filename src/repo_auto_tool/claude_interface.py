@@ -231,6 +231,7 @@ class ClaudeResponse:
         error: Error message if the call failed.
         session_id: Session ID for resuming conversations.
         usage: Token usage statistics for this call.
+        model_used: The model that was used for this call (if known).
     """
     success: bool
     result: str
@@ -238,6 +239,7 @@ class ClaudeResponse:
     error: str | None = None
     session_id: str | None = None
     usage: TokenUsage = field(default_factory=TokenUsage)
+    model_used: str | None = None
     
 
 class ClaudeCodeInterface:
@@ -300,8 +302,19 @@ class ClaudeCodeInterface:
         prompt: str,
         max_turns: int | None = None,
         resume: bool = False,
-    ) -> list[str]:
-        """Build the claude CLI command."""
+        model_override: str | None = None,
+    ) -> tuple[list[str], str | None]:
+        """Build the claude CLI command.
+
+        Args:
+            prompt: The prompt to send.
+            max_turns: Maximum agentic turns (unused, for future).
+            resume: Whether to resume from previous session.
+            model_override: Optional model to use instead of default.
+
+        Returns:
+            Tuple of (command list, model being used).
+        """
         cmd = [
             "claude",
             "-p", prompt,                          # Non-interactive prompt mode
@@ -310,8 +323,10 @@ class ClaudeCodeInterface:
             "--allowedTools", ",".join(self.allowed_tools),
         ]
 
-        if self.model:
-            cmd.extend(["--model", self.model])
+        # Determine which model to use
+        effective_model = model_override or self.model
+        if effective_model:
+            cmd.extend(["--model", effective_model])
 
         # Resume previous session for context continuity
         if resume and self.session_id:
@@ -320,18 +335,20 @@ class ClaudeCodeInterface:
         # Note: max_turns not directly supported, handled by model
         _ = max_turns
 
-        return cmd
+        return cmd, effective_model
     
     def _execute_single_call(
         self,
         cmd: list[str],
         prompt_preview: str = "",
+        model_used: str | None = None,
     ) -> ClaudeResponse:
         """Execute a single Claude CLI call without retry logic.
 
         Args:
             cmd: The command list to execute.
             prompt_preview: First 100 chars of prompt for error context.
+            model_used: The model being used for this call.
 
         Returns:
             ClaudeResponse from this single execution attempt.
@@ -367,6 +384,7 @@ class ClaudeCodeInterface:
                         raw_output=output,
                         session_id=self.session_id,
                         usage=usage,
+                        model_used=model_used,
                     )
                 except json.JSONDecodeError as e:
                     # Non-JSON output (shouldn't happen with --output-format json)
@@ -375,6 +393,7 @@ class ClaudeCodeInterface:
                         success=result.returncode == 0,
                         result=result.stdout,
                         error=f"JSON parse error: {e}" if result.returncode != 0 else None,
+                        model_used=model_used,
                     )
             else:
                 error_msg = result.stderr.strip() if result.stderr else "No output from Claude CLI"
@@ -382,6 +401,7 @@ class ClaudeCodeInterface:
                     success=False,
                     result="",
                     error=error_msg,
+                    model_used=model_used,
                 )
 
         except subprocess.TimeoutExpired:
@@ -392,6 +412,7 @@ class ClaudeCodeInterface:
                 success=False,
                 result="",
                 error=f"Timeout after {self.timeout}s",
+                model_used=model_used,
             )
         except OSError as e:
             # Handle OS-level errors (permissions, resources, etc.)
@@ -400,6 +421,7 @@ class ClaudeCodeInterface:
                 success=False,
                 result="",
                 error=f"OS error: {e}",
+                model_used=model_used,
             )
         except Exception as e:
             # Catch-all for unexpected errors
@@ -408,6 +430,7 @@ class ClaudeCodeInterface:
                 success=False,
                 result="",
                 error=f"Unexpected error: {e}",
+                model_used=model_used,
             )
 
     def call(
@@ -416,6 +439,7 @@ class ClaudeCodeInterface:
         context: str | None = None,
         max_turns: int | None = None,
         resume: bool = False,
+        model_override: str | None = None,
     ) -> ClaudeResponse:
         """Make a call to Claude Code CLI with automatic retry for transient errors.
 
@@ -427,23 +451,26 @@ class ClaudeCodeInterface:
             context: Optional context to prepend.
             max_turns: Limit agentic turns (None = unlimited).
             resume: Continue from previous session.
+            model_override: Optional model to use instead of default.
 
         Returns:
             ClaudeResponse with results.
         """
         full_prompt = f"{context}\n\n{prompt}" if context else prompt
-        cmd = self._build_command(full_prompt, max_turns, resume)
+        cmd, model_used = self._build_command(full_prompt, max_turns, resume, model_override)
 
         # Create prompt preview for error context (used in timeout errors)
         prompt_preview = prompt[:100]
 
         logger.debug(f"Executing: {' '.join(cmd)}")
+        if model_used:
+            logger.debug(f"Using model: {model_used}")
         logger.info(f"Prompt: {prompt_preview}...")
 
         last_response: ClaudeResponse | None = None
 
         for attempt in range(self.max_retries + 1):
-            response = self._execute_single_call(cmd, prompt_preview)
+            response = self._execute_single_call(cmd, prompt_preview, model_used)
 
             # Success - return immediately
             if response.success:
@@ -478,22 +505,49 @@ class ClaudeCodeInterface:
             success=False,
             result="",
             error="All retry attempts exhausted",
+            model_used=model_used,
         )
     
-    def analyze(self, question: str) -> ClaudeResponse:
-        """Ask Claude to analyze the repo without making changes."""
+    def analyze(
+        self,
+        question: str,
+        model_override: str | None = None,
+    ) -> ClaudeResponse:
+        """Ask Claude to analyze the repo without making changes.
+
+        Args:
+            question: The analysis question or prompt.
+            model_override: Optional model to use instead of default.
+
+        Returns:
+            ClaudeResponse with analysis results.
+        """
         return self.call(
             f"ANALYSIS ONLY - Do not edit any files.\n\n{question}",
             max_turns=5,
+            model_override=model_override,
         )
-    
-    def improve(self, instruction: str, max_turns: int = 10) -> ClaudeResponse:
-        """
-        Ask Claude to make improvements to the repo.
-        
+
+    def improve(
+        self,
+        instruction: str,
+        max_turns: int = 10,
+        model_override: str | None = None,
+    ) -> ClaudeResponse:
+        """Ask Claude to make improvements to the repo.
+
         This WILL edit files.
+
+        Args:
+            instruction: The improvement instruction.
+            max_turns: Maximum agentic turns.
+            model_override: Optional model to use instead of default.
+
+        Returns:
+            ClaudeResponse with improvement results.
         """
         return self.call(
             f"Make the following improvements to this codebase:\n\n{instruction}",
             max_turns=max_turns,
+            model_override=model_override,
         )

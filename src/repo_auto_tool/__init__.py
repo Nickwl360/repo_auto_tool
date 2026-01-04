@@ -52,6 +52,14 @@ from .logging import (
     get_logger,
     setup_logging,
 )
+from .model_selector import (
+    MODEL_HAIKU,
+    MODEL_OPUS,
+    MODEL_SONNET,
+    ModelChoice,
+    ModelSelector,
+    TaskComplexity,
+)
 from .safety import (
     DangerousCommand,
     DangerousCommandDetector,
@@ -111,6 +119,13 @@ __all__ = [
     "ConvergenceAction",
     "ChangeTracker",
     "ChangeMetrics",
+    # Model selection
+    "ModelSelector",
+    "ModelChoice",
+    "TaskComplexity",
+    "MODEL_HAIKU",
+    "MODEL_SONNET",
+    "MODEL_OPUS",
     # Logging
     "setup_logging",
     "get_logger",
