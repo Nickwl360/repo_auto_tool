@@ -80,6 +80,13 @@ from .session_history import (
     SessionHistory,
     SessionSummary,
 )
+from .session_metrics import (
+    EfficiencyMetrics,
+    FailureAnalysis,
+    SessionMetrics,
+    SuccessMetrics,
+    TimeMetrics,
+)
 from .state import ImprovementState, IterationRecord, StatusType, truncate_text
 from .validators import (
     CommandValidator,
@@ -150,6 +157,12 @@ __all__ = [
     "SessionHistory",
     "SessionSummary",
     "ErrorPattern",
+    # Session metrics
+    "SessionMetrics",
+    "SuccessMetrics",
+    "EfficiencyMetrics",
+    "TimeMetrics",
+    "FailureAnalysis",
     # Logging
     "setup_logging",
     "get_logger",
