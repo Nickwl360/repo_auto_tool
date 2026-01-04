@@ -124,7 +124,7 @@
 - [x] `--fix` mode: only fix failing tests/lint
 - [x] `--refactor <target>` mode: focused refactoring
 - [x] `--plan` mode: create plan, wait for approval
-- [x] `--watch` mode: placeholder for continuous monitoring
+- [x] `--watch` mode: continuous file monitoring and improvement
 
 ---
 

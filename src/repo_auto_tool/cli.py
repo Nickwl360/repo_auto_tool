@@ -518,11 +518,29 @@ Examples:
             return 1
 
     if execution_mode == "watch":
-        # Watch mode: continuous monitoring (not yet fully implemented)
-        print("Watch mode is not yet fully implemented.", file=sys.stderr)
-        print("This mode will monitor the repository for changes and continuously improve.")
-        print("For now, use the standard mode with --max-iterations for continuous improvement.")
-        return 1
+        # Watch mode: continuous monitoring
+        from .watch_mode import WatchConfig, WatchMode
+
+        if not args.quiet:
+            print("Starting watch mode - monitoring repository for changes...")
+            print("Press Ctrl+C to stop watching")
+
+        try:
+            watch_config = WatchConfig(
+                debounce_seconds=2.0,
+                poll_interval=1.0,
+                cooldown_seconds=30.0,
+                max_iterations_per_trigger=min(5, args.max_iterations),
+            )
+            watch = WatchMode(config=config, watch_config=watch_config)
+            watch.start(blocking=True)
+            return 0
+        except KeyboardInterrupt:
+            print("\nWatch mode stopped by user")
+            return 0
+        except Exception as e:
+            print(f"Watch mode error: {e}", file=sys.stderr)
+            return 1
 
     # Standard execution (or fix/refactor modes which use standard loop)
     result = improver.run()

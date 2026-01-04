@@ -113,6 +113,15 @@ from .validators import (
     ValidationResult,
     Validator,
 )
+from .watch_mode import (
+    FileState,
+    FileWatcher,
+    WatchConfig,
+    WatchMode,
+    WatchModeAborted,
+    WatchModeError,
+    run_watch_mode,
+)
 
 __version__ = "0.1.0"
 __all__ = [
@@ -236,4 +245,12 @@ __all__ = [
     "SyntaxValidator",
     "ValidationPipeline",
     "ValidationResult",
+    # Watch mode
+    "WatchMode",
+    "WatchConfig",
+    "WatchModeError",
+    "WatchModeAborted",
+    "FileWatcher",
+    "FileState",
+    "run_watch_mode",
 ]
