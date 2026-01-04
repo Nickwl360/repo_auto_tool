@@ -110,356 +110,301 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic usage
-  repo-improver /path/to/repo "Add type hints to all functions"
+  repo-improver . "Add type hints"      # Basic usage
+  repo-improver . --fix                 # Fix tests/lint only
+  repo-improver . --resume              # Resume previous session
+  repo-improver . "Goal" -n 50          # Custom iteration limit
 
-  # With custom settings
-  repo-improver . "Improve test coverage to 80%" --max-iterations 50 --test-cmd "pytest --cov"
-
-  # Work on a remote repository (clones automatically)
-  repo-improver https://github.com/user/repo "Add documentation"
-  repo-improver user/repo "Fix linting issues"  # GitHub shorthand
-
-  # Read goal from a file (supports .txt, .md, .yaml, .json)
-  repo-improver . --prompt-file ideas.md
-
-  # Research mode - explore without changes
-  repo-improver . --research
-
-  # Fix mode - only fix failing tests/lint
-  repo-improver . --fix
-
-  # Refactor a specific target
-  repo-improver . --refactor src/auth.py
-  repo-improver . --refactor "authentication module"
-
-  # Plan mode - create plan, wait for approval
-  repo-improver . "Add caching layer" --plan
-
-  # Resume a paused session
-  repo-improver . --resume
+Use --help-all for advanced options.
 """,
     )
 
+    # Check for --help-all before parsing
+    show_all_help = "--help-all" in sys.argv
+
+    # === CORE ARGUMENTS (always shown) ===
     parser.add_argument(
         "repo_path",
-        type=str,  # String to support both paths and URLs
+        type=str,
         nargs="?",
         default=".",
-        help="Path to repository or URL (GitHub/GitLab/etc). Supports: "
-             "local path, https://github.com/user/repo, user/repo (GitHub shorthand)",
+        help="Path to repository (default: current directory)",
     )
-    
+
     parser.add_argument(
         "goal",
         type=str,
         nargs="?",
-        help="The improvement goal (natural language description)",
+        help="What to improve (natural language)",
     )
 
-    # Smart prompt input
-    parser.add_argument(
-        "--prompt-file", "-f",
-        type=Path,
-        default=None,
-        metavar="FILE",
-        help="Read goal from a file (supports .txt, .md, .yaml, .json). "
-             "Intelligently parses structured and unstructured formats.",
-    )
-
-    # Iteration settings
     parser.add_argument(
         "--max-iterations", "-n",
         type=int,
         default=20,
-        help="Maximum improvement iterations (default: 20)",
-    )
-    
-    parser.add_argument(
-        "--max-failures",
-        type=int,
-        default=3,
-        help="Max consecutive failures before stopping (default: 3)",
-    )
-    
-    # Validation settings
-    parser.add_argument(
-        "--test-cmd",
-        type=str,
-        default=None,
-        help="Test command (auto-detected or defaults to pytest)",
+        help="Max iterations (default: 20)",
     )
 
-    parser.add_argument(
-        "--lint-cmd",
-        type=str,
-        default=None,
-        help="Lint command (auto-detected or defaults to ruff check .)",
-    )
-    
-    parser.add_argument(
-        "--no-tests",
-        action="store_true",
-        help="Skip running tests",
-    )
-    
-    parser.add_argument(
-        "--no-lint",
-        action="store_true",
-        help="Skip running linter",
-    )
-
-    parser.add_argument(
-        "--parallel-validation",
-        action="store_true",
-        help="Run validators (tests, lint) in parallel for faster validation",
-    )
-
-    # Git settings
-    parser.add_argument(
-        "--no-git",
-        action="store_true",
-        help="Don't use git (no branching/commits)",
-    )
-    
-    parser.add_argument(
-        "--branch",
-        type=str,
-        default="repo-improver/auto",
-        help="Git branch name for changes",
-    )
-    
-    # Mode settings
-    parser.add_argument(
-        "--analyze-only",
-        action="store_true",
-        help="Only analyze, don't make changes",
-    )
-    
-    parser.add_argument(
-        "--resume",
-        action="store_true",
-        help="Resume from previous session state",
-    )
-
-    # New execution modes (Goal #8)
-    parser.add_argument(
-        "--research",
-        action="store_true",
-        help="Research mode: explore and report without making changes. "
-             "Analyzes the codebase, identifies patterns, and suggests improvements.",
-    )
-
-    parser.add_argument(
+    # === MODES (common) ===
+    modes = parser.add_argument_group("Modes")
+    modes.add_argument(
         "--fix",
         action="store_true",
-        help="Fix mode: only fix failing tests and lint errors. "
-             "Does not add new features or make other changes.",
+        help="Only fix failing tests/lint",
     )
-
-    parser.add_argument(
-        "--refactor",
-        type=str,
-        default=None,
-        metavar="TARGET",
-        help="Refactor mode: focused refactoring on a specific file, module, or pattern. "
-             "Example: --refactor src/auth.py or --refactor 'authentication module'",
+    modes.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume previous session",
     )
-
-    parser.add_argument(
+    modes.add_argument(
+        "--research",
+        action="store_true",
+        help="Analyze without changes",
+    )
+    modes.add_argument(
         "--plan",
         action="store_true",
-        help="Plan mode: create a detailed implementation plan and wait for approval "
-             "before executing. Outputs the plan without making changes.",
+        help="Create plan, don't execute",
     )
 
-    parser.add_argument(
-        "--watch",
+    # === OUTPUT (common) ===
+    output = parser.add_argument_group("Output")
+    output.add_argument(
+        "--verbose", "-v",
         action="store_true",
-        help="Watch mode: monitor the repository for changes and continuously improve. "
-             "Runs in the background and responds to file changes.",
+        help="Show full Claude output",
     )
-
-    parser.add_argument(
-        "--agent-mode",
-        type=str,
-        choices=["pre-analysis", "goal-decomposer", "reviewer", "diagnostics"],
-        metavar="MODE",
-        help="Run in agent mode: pre-analysis (analyze and suggest goals), "
-             "goal-decomposer (break goal into steps), reviewer (review changes), "
-             "diagnostics (analyze session history for recurring issues)",
-    )
-    
-    # Output settings
-    parser.add_argument(
+    output.add_argument(
         "--quiet", "-q",
         action="store_true",
         help="Minimal output",
     )
-    
-    parser.add_argument(
-        "--json",
+    output.add_argument(
+        "--no-tui",
         action="store_true",
-        help="Output results as JSON",
+        help="Disable terminal UI",
     )
 
+    # === HELP ===
     parser.add_argument(
+        "--help-all",
+        action="store_true",
+        help="Show all options including advanced",
+    )
+
+    # === ADVANCED OPTIONS (hidden by default) ===
+    # Use argparse.SUPPRESS to hide from default help
+    HIDE = argparse.SUPPRESS if not show_all_help else None
+
+    advanced = parser.add_argument_group("Advanced" if show_all_help else argparse.SUPPRESS)
+
+    advanced.add_argument(
+        "--prompt-file", "-f",
+        type=Path,
+        default=None,
+        help="Read goal from file" if show_all_help else HIDE,
+    )
+    advanced.add_argument(
+        "--max-failures",
+        type=int,
+        default=3,
+        help="Max consecutive failures (default: 3)" if show_all_help else HIDE,
+    )
+    advanced.add_argument(
+        "--test-cmd",
+        type=str,
+        default=None,
+        help="Test command (auto-detected)" if show_all_help else HIDE,
+    )
+    advanced.add_argument(
+        "--lint-cmd",
+        type=str,
+        default=None,
+        help="Lint command (auto-detected)" if show_all_help else HIDE,
+    )
+    advanced.add_argument(
+        "--no-tests",
+        action="store_true",
+        help="Skip tests" if show_all_help else HIDE,
+    )
+    advanced.add_argument(
+        "--no-lint",
+        action="store_true",
+        help="Skip linter" if show_all_help else HIDE,
+    )
+    advanced.add_argument(
+        "--no-git",
+        action="store_true",
+        help="Don't use git" if show_all_help else HIDE,
+    )
+    advanced.add_argument(
+        "--branch",
+        type=str,
+        default="repo-improver/auto",
+        help="Git branch name" if show_all_help else HIDE,
+    )
+    advanced.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help="Claude model to use" if show_all_help else HIDE,
+    )
+    advanced.add_argument(
+        "--max-cost",
+        type=float,
+        default=None,
+        help="Max cost in USD" if show_all_help else HIDE,
+    )
+    advanced.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON" if show_all_help else HIDE,
+    )
+    advanced.add_argument(
+        "--refactor",
+        type=str,
+        default=None,
+        help="Refactor specific target" if show_all_help else HIDE,
+    )
+    advanced.add_argument(
+        "--watch",
+        action="store_true",
+        help="Watch mode" if show_all_help else HIDE,
+    )
+    advanced.add_argument(
+        "--create-pr",
+        action="store_true",
+        help="Create PR when done" if show_all_help else HIDE,
+    )
+
+    # === RARELY USED (always hidden unless --help-all) ===
+    rarely_used = parser.add_argument_group("Rarely Used" if show_all_help else argparse.SUPPRESS)
+
+    rarely_used.add_argument(
+        "--parallel-validation",
+        action="store_true",
+        help="Run validators in parallel" if show_all_help else HIDE,
+    )
+    rarely_used.add_argument(
+        "--analyze-only",
+        action="store_true",
+        help="Only analyze" if show_all_help else HIDE,
+    )
+    rarely_used.add_argument(
+        "--agent-mode",
+        type=str,
+        choices=["pre-analysis", "goal-decomposer", "reviewer", "diagnostics"],
+        help="Run in agent mode" if show_all_help else HIDE,
+    )
+    rarely_used.add_argument(
         "--log-level",
         type=str,
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        metavar="LEVEL",
-        help="Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL (default: INFO)",
+        help="Log level" if show_all_help else HIDE,
     )
-
-    parser.add_argument(
+    rarely_used.add_argument(
         "--log-file",
         type=Path,
         default=None,
-        help="Path to log file (default: .repo-improver.log in repo)",
+        help="Log file path" if show_all_help else HIDE,
     )
-
-    # State and convergence settings
-    parser.add_argument(
+    rarely_used.add_argument(
         "--state-dir",
         type=Path,
         default=None,
-        help="Directory for state files (default: repo root)",
+        help="State files directory" if show_all_help else HIDE,
     )
-
-    parser.add_argument(
+    rarely_used.add_argument(
         "--goal-type",
         type=str,
         choices=["open-ended", "bounded", "exploratory"],
         default="open-ended",
-        help="Goal type: open-ended, bounded, or exploratory (default: open-ended)",
+        help="Goal type" if show_all_help else HIDE,
     )
-
-    parser.add_argument(
+    rarely_used.add_argument(
         "--checkpoint-interval",
         type=int,
         default=5,
-        help="Create checkpoint every N iterations (default: 5, 0 to disable)",
+        help="Checkpoint interval" if show_all_help else HIDE,
     )
-
-    parser.add_argument(
+    rarely_used.add_argument(
         "--no-early-stop",
         action="store_true",
-        help="Disable early stopping when convergence detected",
+        help="Disable early stopping" if show_all_help else HIDE,
     )
-
-    parser.add_argument(
+    rarely_used.add_argument(
         "--smart-model-selection",
         action="store_true",
-        help="Auto-select model based on task complexity (Haiku for simple tasks)",
+        help="Auto-select model by complexity" if show_all_help else HIDE,
     )
-
-    parser.add_argument(
-        "--model",
-        type=str,
-        default=None,
-        help="Claude model to use (e.g., claude-sonnet-4-20250514). Overrides smart selection.",
-    )
-
-    parser.add_argument(
-        "--max-cost",
-        type=float,
-        default=None,
-        metavar="DOLLARS",
-        help="Maximum cost in USD before stopping (e.g., --max-cost 5.00 for $5 budget)",
-    )
-
-    parser.add_argument(
+    rarely_used.add_argument(
         "--show-metrics",
         action="store_true",
-        help="Show detailed session metrics report at the end of the run",
+        help="Show metrics report" if show_all_help else HIDE,
     )
-
-    # TUI settings
-    parser.add_argument(
-        "--no-tui",
-        action="store_true",
-        help="Disable the interactive terminal UI (use enhanced plain text mode instead)",
-    )
-
-    parser.add_argument(
+    rarely_used.add_argument(
         "--tui-refresh-rate",
         type=float,
         default=0.5,
-        metavar="SECONDS",
-        help="TUI refresh rate in seconds (default: 0.5)",
+        help="TUI refresh rate" if show_all_help else HIDE,
     )
-
-    # Foreign repository options
-    parser.add_argument(
+    rarely_used.add_argument(
         "--workspace-dir",
         type=Path,
         default=None,
-        metavar="DIR",
-        help="Directory for cloning remote repositories (default: temp dir)",
+        help="Clone workspace dir" if show_all_help else HIDE,
     )
-
-    parser.add_argument(
+    rarely_used.add_argument(
         "--keep-clone",
         action="store_true",
-        help="Don't delete cloned repository on exit (useful for inspection)",
+        help="Keep cloned repo" if show_all_help else HIDE,
     )
-
-    parser.add_argument(
+    rarely_used.add_argument(
         "--shallow-clone",
         action="store_true",
-        help="Use shallow clone (faster, less disk space, but limited git history)",
+        help="Shallow clone" if show_all_help else HIDE,
     )
-
-    parser.add_argument(
+    rarely_used.add_argument(
         "--skip-goal-analysis",
         action="store_true",
-        help="Skip automatic goal complexity and risk analysis",
+        help="Skip goal analysis" if show_all_help else HIDE,
     )
-
-    parser.add_argument(
+    rarely_used.add_argument(
         "--analyze-goal",
         action="store_true",
-        help="Only analyze the goal (show complexity, risk, suggestions) without running",
+        help="Analyze goal only" if show_all_help else HIDE,
     )
-
-    # PR generation options
-    parser.add_argument(
-        "--create-pr",
-        action="store_true",
-        help="Create a pull request after improvements are complete. "
-             "Requires gh (GitHub) or glab (GitLab) CLI to be installed and authenticated.",
-    )
-
-    parser.add_argument(
+    rarely_used.add_argument(
         "--pr-preview",
         action="store_true",
-        help="Preview the PR that would be created without actually creating it.",
+        help="Preview PR" if show_all_help else HIDE,
     )
-
-    parser.add_argument(
+    rarely_used.add_argument(
         "--pr-draft",
         action="store_true",
-        help="Create the PR as a draft (not ready for review).",
+        help="Create draft PR" if show_all_help else HIDE,
     )
-
-    parser.add_argument(
+    rarely_used.add_argument(
         "--pr-base",
         type=str,
         default=None,
-        metavar="BRANCH",
-        help="Base branch for the PR (default: main or detected default branch).",
+        help="PR base branch" if show_all_help else HIDE,
     )
-
-    parser.add_argument(
+    rarely_used.add_argument(
         "--pr-labels",
         type=str,
         default=None,
-        metavar="LABELS",
-        help="Comma-separated labels to add to the PR (e.g., 'bug,enhancement').",
+        help="PR labels" if show_all_help else HIDE,
     )
 
     args = parser.parse_args()
+
+    # Handle --help-all: show full help and exit
+    if args.help_all:
+        parser.print_help()
+        return 0
 
     # Resolve repo path (handles URLs and local paths)
     global _foreign_repo_manager
@@ -693,7 +638,7 @@ Examples:
         goal_type=args.goal_type,
         checkpoint_interval=args.checkpoint_interval,
         early_stop_enabled=not args.no_early_stop,
-        verbose=not args.quiet,
+        verbose=args.verbose if hasattr(args, "verbose") else not args.quiet,
         log_level=args.log_level,
         log_file=args.log_file,
         output_format="json" if args.json else "text",
