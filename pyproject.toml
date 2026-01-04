@@ -39,8 +39,19 @@ repo-auto-tool = "repo_auto_tool.cli:main"
 Homepage = "https://github.com/nick/repo-improver"
 Repository = "https://github.com/nick/repo-improver"
 
+[tool.hatch.build]
+# Use src-layout: package lives in src/ but installs as repo_auto_tool
+sources = ["src"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/repo_auto_tool"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/README.md",
+    "/pyproject.toml",
+]
 
 [tool.ruff]
 target-version = "py311"
