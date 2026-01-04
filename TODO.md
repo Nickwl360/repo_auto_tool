@@ -12,7 +12,8 @@
 ### High Priority (Production Readiness)
 
 #### Testing
-- [ ] Add unit tests for core modules (target 80% coverage)
+- [x] Add unit tests for core modules - started (exceptions, safety, convergence: 125 tests passing)
+- [ ] Add more unit tests to reach 80% coverage
 - [ ] Add integration tests for the full improvement loop
 - [ ] Add tests for edge cases (network failures, malformed state)
 
