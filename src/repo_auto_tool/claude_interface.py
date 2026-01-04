@@ -78,23 +78,20 @@ class ClaudeCodeInterface:
             "claude",
             "-p", prompt,                          # Non-interactive prompt mode
             "--output-format", "json",             # Machine-readable output
-            "--yes",                               # Auto-accept all tool use
+            "--dangerously-skip-permissions",      # Auto-accept all tool use
             "--allowedTools", ",".join(self.allowed_tools),
         ]
-        
-        # Set working directory to target repo
-        cmd.extend(["--cwd", str(self.working_dir)])
-        
+
         if self.model:
             cmd.extend(["--model", self.model])
-        
-        if max_turns:
-            cmd.extend(["--max-turns", str(max_turns)])
-        
+
         # Resume previous session for context continuity
         if resume and self.session_id:
-            cmd.extend(["--resume", "--session-id", self.session_id])
-        
+            cmd.extend(["--resume", self.session_id])
+
+        # Note: max_turns not directly supported, handled by model
+        _ = max_turns
+
         return cmd
     
     def call(
