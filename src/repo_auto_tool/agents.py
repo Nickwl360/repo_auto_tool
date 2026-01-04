@@ -18,7 +18,7 @@ from .claude_interface import ClaudeCodeInterface
 
 logger = logging.getLogger(__name__)
 
-AgentMode = Literal["pre-analysis", "goal-decomposer", "reviewer"]
+AgentMode = Literal["pre-analysis", "goal-decomposer", "reviewer", "diagnostics"]
 
 
 @dataclass
@@ -432,6 +432,321 @@ Be constructive and specific in your feedback.
         )
 
 
+class DiagnosticsAgent(Agent):
+    """Agent that analyzes session history to identify recurring issues and patterns.
+
+    This agent performs self-diagnostic analysis on the tool's own iteration history
+    to identify:
+    - Recurring validation failures (same error types appearing multiple times)
+    - Common failure patterns (e.g., import errors, syntax issues, test failures)
+    - Improvement suggestions based on past session behavior
+    - Efficiency recommendations (token usage patterns, iteration waste)
+
+    This is a meta-capability that allows the tool to learn from its own failures
+    and provide actionable suggestions to improve future runs.
+    """
+
+    name: str = "DiagnosticsAgent"
+
+    DIAGNOSTICS_PROMPT = """You are analyzing the iteration history of a code improvement tool.
+
+Your goal is to identify patterns, recurring issues, and areas for improvement.
+
+SESSION DATA:
+{session_data}
+
+ITERATION HISTORY:
+{iteration_history}
+
+Analyze this data and provide:
+
+1. **RECURRING ISSUES**: Identify errors or failures that appear multiple times.
+   - What types of errors recur? (validation failures, syntax errors, import issues, etc.)
+   - Are there patterns in when/why failures happen?
+
+2. **ROOT CAUSE ANALYSIS**: For the top 3 recurring issues:
+   - What is the likely root cause?
+   - Why does the tool keep making this mistake?
+
+3. **EFFICIENCY ANALYSIS**:
+   - How many iterations were wasted on repeated failures?
+   - Are there signs of the tool getting stuck in loops?
+   - Token usage patterns - any signs of inefficiency?
+
+4. **RECOMMENDATIONS**: Provide 3-5 specific, actionable suggestions to improve:
+   - Changes to prompts or context provided
+   - Missing validation steps
+   - Better error handling needed
+   - Configuration adjustments
+
+Be specific and reference actual iteration numbers and error messages where applicable.
+Format each recommendation as an imperative action that can be taken.
+"""
+
+    def __init__(
+        self,
+        working_dir: Path,
+        model: str | None = None,
+        timeout: int = 600,
+    ):
+        """Initialize the diagnostics agent.
+
+        Args:
+            working_dir: The repository directory (used to find state file)
+            model: Optional model override for Claude CLI
+            timeout: Timeout in seconds for Claude CLI calls
+        """
+        super().__init__(working_dir, model, timeout)
+        # self.working_dir is set to Path by parent class
+        self.state_file = self.working_dir / ".repo-improver-state.json"
+
+    def _load_session_data(self) -> dict | None:
+        """Load session data from the state file.
+
+        Returns:
+            Session data dictionary or None if file doesn't exist.
+        """
+        import json
+
+        if not self.state_file.exists():
+            return None
+
+        try:
+            return json.loads(self.state_file.read_text())
+        except (json.JSONDecodeError, OSError) as e:
+            logger.error(f"Failed to load state file: {e}")
+            return None
+
+    def _analyze_failure_patterns(self, iterations: list[dict]) -> dict:
+        """Analyze iteration history to identify failure patterns.
+
+        Args:
+            iterations: List of iteration records from state.
+
+        Returns:
+            Dictionary with pattern analysis results.
+        """
+        patterns = {
+            "total_iterations": len(iterations),
+            "failures": 0,
+            "validation_failures": 0,
+            "error_types": {},
+            "failure_streaks": [],
+            "wasted_iterations": 0,
+        }
+
+        current_streak = 0
+        for it in iterations:
+            if not it.get("success") or not it.get("validation_passed"):
+                patterns["failures"] += 1
+                current_streak += 1
+
+                # Categorize error type
+                error = it.get("error", "") or ""
+                error_lower = error.lower()
+
+                if "syntax" in error_lower:
+                    error_type = "syntax_error"
+                elif "import" in error_lower:
+                    error_type = "import_error"
+                elif "test" in error_lower or "assert" in error_lower:
+                    error_type = "test_failure"
+                elif "lint" in error_lower or "ruff" in error_lower:
+                    error_type = "lint_error"
+                elif "timeout" in error_lower:
+                    error_type = "timeout"
+                elif error:
+                    error_type = "other_error"
+                else:
+                    error_type = "unknown"
+
+                patterns["error_types"][error_type] = (
+                    patterns["error_types"].get(error_type, 0) + 1
+                )
+
+                if not it.get("validation_passed"):
+                    patterns["validation_failures"] += 1
+            else:
+                if current_streak > 0:
+                    patterns["failure_streaks"].append(current_streak)
+                current_streak = 0
+
+        if current_streak > 0:
+            patterns["failure_streaks"].append(current_streak)
+
+        # Calculate wasted iterations (consecutive failures that didn't lead to progress)
+        patterns["wasted_iterations"] = sum(
+            s - 1 for s in patterns["failure_streaks"] if s > 1
+        )
+
+        return patterns
+
+    def _format_session_summary(self, data: dict) -> str:
+        """Format session data for the prompt.
+
+        Args:
+            data: Session state data dictionary.
+
+        Returns:
+            Formatted string summary.
+        """
+        lines = [
+            f"Goal: {data.get('goal', 'Unknown')}",
+            f"Status: {data.get('status', 'Unknown')}",
+            f"Total iterations: {data.get('total_iterations', 0)}",
+            f"Consecutive failures: {data.get('consecutive_failures', 0)}",
+            f"Total input tokens: {data.get('total_input_tokens', 0):,}",
+            f"Total output tokens: {data.get('total_output_tokens', 0):,}",
+        ]
+
+        if data.get("summary"):
+            lines.append(f"Final summary: {data['summary']}")
+
+        return "\n".join(lines)
+
+    def _format_iteration_history(self, iterations: list[dict], max_items: int = 20) -> str:
+        """Format iteration history for the prompt.
+
+        Args:
+            iterations: List of iteration records.
+            max_items: Maximum number of iterations to include.
+
+        Returns:
+            Formatted string with iteration details.
+        """
+        # Take most recent iterations
+        recent = iterations[-max_items:] if len(iterations) > max_items else iterations
+
+        lines = []
+        for it in recent:
+            num = it.get("iteration", "?")
+            success = "[OK]" if it.get("success") and it.get("validation_passed") else "[FAIL]"
+
+            # Truncate result for readability
+            result = it.get("result", "")[:150]
+            if len(it.get("result", "")) > 150:
+                result += "..."
+
+            error = it.get("error", "")
+            if error:
+                error = f" | Error: {error[:100]}"
+
+            lines.append(f"  {num}. {success} {result}{error}")
+
+        return "\n".join(lines)
+
+    def run(self, **kwargs: Any) -> AgentResult:
+        """Run diagnostics on the session history.
+
+        Returns:
+            AgentResult with diagnostic findings and recommendations.
+        """
+        logger.info("Running self-diagnostics...")
+
+        # Load session data
+        data = self._load_session_data()
+        if not data:
+            return AgentResult(
+                success=False,
+                output="",
+                error=f"No session state found at {self.state_file}",
+            )
+
+        iterations = data.get("iterations", [])
+        if not iterations:
+            return AgentResult(
+                success=False,
+                output="",
+                error="No iteration history to analyze",
+            )
+
+        # Pre-analyze patterns locally (without LLM)
+        patterns = self._analyze_failure_patterns(iterations)
+        fail_count = patterns["failures"]
+        total_count = patterns["total_iterations"]
+        logger.info(f"Found {fail_count} failures across {total_count} iterations")
+        logger.info(f"Error types: {patterns['error_types']}")
+
+        # Format data for LLM analysis
+        session_summary = self._format_session_summary(data)
+        iteration_history = self._format_iteration_history(iterations)
+
+        # Add pattern analysis to the prompt
+        pattern_summary = (
+            f"\nPRE-ANALYSIS PATTERNS:\n"
+            f"  Failure rate: {patterns['failures']}/{patterns['total_iterations']} "
+            f"({100*patterns['failures']/max(1, patterns['total_iterations']):.1f}%)\n"
+            f"  Validation failures: {patterns['validation_failures']}\n"
+            f"  Error types: {patterns['error_types']}\n"
+            f"  Failure streaks: {patterns['failure_streaks']}\n"
+            f"  Estimated wasted iterations: {patterns['wasted_iterations']}\n"
+        )
+
+        prompt = self.DIAGNOSTICS_PROMPT.format(
+            session_data=session_summary + pattern_summary,
+            iteration_history=iteration_history,
+        )
+
+        response = self.claude.call(prompt)
+
+        if not response.success:
+            logger.error(f"Diagnostics analysis failed: {response.error}")
+            return AgentResult(
+                success=False,
+                output="",
+                error=response.error or "Diagnostics analysis failed",
+            )
+
+        # Extract recommendations from response
+        recommendations = self._extract_recommendations(response.result)
+
+        return AgentResult(
+            success=True,
+            output=response.result,
+            suggestions=recommendations,
+            metadata={
+                "total_iterations": patterns["total_iterations"],
+                "failure_rate": patterns["failures"] / max(1, patterns["total_iterations"]),
+                "error_types": patterns["error_types"],
+                "wasted_iterations": patterns["wasted_iterations"],
+            },
+        )
+
+    def _extract_recommendations(self, response: str) -> list[str]:
+        """Extract recommendations from the diagnostics response.
+
+        Args:
+            response: Full response text from Claude.
+
+        Returns:
+            List of recommendation strings.
+        """
+        recommendations = []
+        in_recommendations = False
+
+        for line in response.split("\n"):
+            line_lower = line.lower()
+            if "recommendation" in line_lower and ":" in line:
+                in_recommendations = True
+                continue
+            if in_recommendations:
+                stripped = line.strip()
+                if stripped.startswith(("-", "*")):
+                    rec = stripped.lstrip("-* ").strip()
+                    if rec:
+                        recommendations.append(rec)
+                elif stripped and stripped[0].isdigit() and "." in stripped[:3]:
+                    rec = stripped.split(".", 1)[1].strip() if "." in stripped else stripped
+                    if rec:
+                        recommendations.append(rec)
+                elif stripped == "" or any(
+                    kw in line_lower for kw in ["analysis", "issue", "pattern"]
+                ):
+                    in_recommendations = False
+
+        return recommendations
+
+
 def create_agent(
     mode: AgentMode,
     working_dir: Path,
@@ -456,6 +771,7 @@ def create_agent(
         "pre-analysis": PreAnalysisAgent,
         "goal-decomposer": GoalDecomposerAgent,
         "reviewer": ReviewerAgent,
+        "diagnostics": DiagnosticsAgent,
     }
 
     if mode not in agents:

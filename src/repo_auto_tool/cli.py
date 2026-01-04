@@ -42,6 +42,9 @@ def _run_agent_mode(args: argparse.Namespace, config: "ImproverConfig") -> int:
             return 1
         # For reviewer, use goal as both goal and task for now
         result = agent.run(goal=args.goal, task=args.goal)
+    elif mode == "diagnostics":
+        # Diagnostics mode analyzes the session state file
+        result = agent.run()
     else:
         print(f"Error: Unknown agent mode '{mode}'", file=sys.stderr)
         return 1
@@ -196,10 +199,11 @@ Examples:
     parser.add_argument(
         "--agent-mode",
         type=str,
-        choices=["pre-analysis", "goal-decomposer", "reviewer"],
+        choices=["pre-analysis", "goal-decomposer", "reviewer", "diagnostics"],
         metavar="MODE",
         help="Run in agent mode: pre-analysis (analyze and suggest goals), "
-             "goal-decomposer (break goal into steps), reviewer (review changes)",
+             "goal-decomposer (break goal into steps), reviewer (review changes), "
+             "diagnostics (analyze session history for recurring issues)",
     )
     
     # Output settings
@@ -276,12 +280,12 @@ Examples:
     args = parser.parse_args()
     
     # Validate arguments
-    # Goal not required for pre-analysis mode or analyze-only
+    # Goal not required for pre-analysis mode, diagnostics mode, or analyze-only
     if not args.resume and not args.goal and not args.analyze_only:
-        if args.agent_mode != "pre-analysis":
+        if args.agent_mode not in ("pre-analysis", "diagnostics"):
             parser.error(
                 "Goal is required unless using --resume, --analyze-only, "
-                "or --agent-mode pre-analysis"
+                "or --agent-mode pre-analysis/diagnostics"
             )
     
     # Check for existing state if resuming
