@@ -1,13 +1,12 @@
 """Main repo improver orchestrator."""
 
 import logging
-from pathlib import Path
 
-from .config import ImproverConfig
-from .state import ImprovementState
 from .claude_interface import ClaudeCodeInterface
-from .validators import ValidationPipeline, CommandValidator
+from .config import ImproverConfig
 from .git_helper import GitHelper
+from .state import ImprovementState
+from .validators import CommandValidator, ValidationPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +116,8 @@ Do NOT simply revert - try to fix the problems properly.
             format="%(asctime)s [%(levelname)s] %(message)s",
             handlers=[
                 logging.StreamHandler(),
-                logging.FileHandler(self.config.log_file) if self.config.log_file else logging.NullHandler(),
+                logging.FileHandler(self.config.log_file)
+                if self.config.log_file else logging.NullHandler(),
             ]
         )
     
@@ -204,7 +204,7 @@ Do NOT simply revert - try to fix the problems properly.
         
         # Check for goal completion
         if result.strip().startswith("GOAL_COMPLETE:"):
-            logger.info("🎉 Claude indicates goal is complete!")
+            logger.info(":) Claude indicates goal is complete!")
             self.state.record_iteration(
                 prompt=task,
                 result=result,
@@ -231,7 +231,7 @@ Do NOT simply revert - try to fix the problems properly.
         all_passed, validation_results = self.validators.validate(self.config.repo_path)
         
         if all_passed:
-            logger.info("✓ All validations passed")
+            logger.info("[OK] All validations passed")
             
             # Commit if using git
             commit_hash = None
@@ -248,7 +248,7 @@ Do NOT simply revert - try to fix the problems properly.
             return True
         
         else:
-            logger.warning("✗ Validation failed")
+            logger.warning("[FAIL] Validation failed")
             failure_summary = self.validators.get_failure_summary(validation_results)
             
             # Rollback changes
@@ -271,7 +271,7 @@ Do NOT simply revert - try to fix the problems properly.
         
         Returns the final state with results.
         """
-        logger.info(f"Starting repo improvement")
+        logger.info("Starting repo improvement")
         logger.info(f"  Repository: {self.config.repo_path}")
         logger.info(f"  Goal: {self.config.goal}")
         logger.info(f"  Max iterations: {self.config.max_iterations}")
@@ -284,7 +284,8 @@ Do NOT simply revert - try to fix the problems properly.
             while self.state.current_iteration < self.config.max_iterations:
                 # Check for too many consecutive failures
                 if self.state.consecutive_failures >= self.config.max_consecutive_failures:
-                    logger.error(f"Too many consecutive failures ({self.state.consecutive_failures})")
+                    failures = self.state.consecutive_failures
+                    logger.error(f"Too many consecutive failures ({failures})")
                     self.state.mark_failed("Max consecutive failures reached")
                     break
                 
@@ -294,7 +295,7 @@ Do NOT simply revert - try to fix the problems properly.
                     break
                 
                 # Run an iteration
-                success = self._run_iteration()
+                self._run_iteration()
                 
                 # Save state after each iteration
                 self.state.save(self.config.state_file)

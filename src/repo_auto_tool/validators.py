@@ -1,10 +1,10 @@
 """Validators to ensure improvements don't break the codebase."""
 
-import subprocess
 import logging
+import subprocess
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from abc import ABC, abstractmethod
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +55,9 @@ class CommandValidator(Validator):
             output = result.stdout + result.stderr
             
             if passed:
-                logger.info(f"  ✓ {self.name} passed")
+                logger.info(f"  [OK] {self.name} passed")
             else:
-                logger.warning(f"  ✗ {self.name} failed")
+                logger.warning(f"  [FAIL] {self.name} failed")
                 logger.debug(f"  Output: {output[:500]}")
             
             return ValidationResult(
@@ -68,14 +68,14 @@ class CommandValidator(Validator):
             )
             
         except subprocess.TimeoutExpired:
-            logger.error(f"  ✗ {self.name} timed out")
+            logger.error(f"  [FAIL] {self.name} timed out")
             return ValidationResult(
                 passed=False,
                 validator_name=self.name,
                 message=f"Timed out after {self.timeout}s",
             )
         except Exception as e:
-            logger.error(f"  ✗ {self.name} error: {e}")
+            logger.error(f"  [FAIL] {self.name} error: {e}")
             return ValidationResult(
                 passed=False,
                 validator_name=self.name,
@@ -126,7 +126,7 @@ class SyntaxValidator(Validator):
                 errors.append(f"{py_file}: {e}")
         
         if errors:
-            logger.warning(f"  ✗ Syntax errors in {len(errors)} files")
+            logger.warning(f"  [FAIL] Syntax errors in {len(errors)} files")
             return ValidationResult(
                 passed=False,
                 validator_name=self.name,
@@ -134,7 +134,7 @@ class SyntaxValidator(Validator):
                 output="\n".join(errors),
             )
         
-        logger.info("  ✓ Syntax check passed")
+        logger.info("  [OK] Syntax check passed")
         return ValidationResult(
             passed=True,
             validator_name=self.name,
@@ -173,7 +173,9 @@ class ValidationPipeline:
         return all_passed, results
     
     @classmethod
-    def default(cls, test_cmd: str = "pytest", lint_cmd: str = "ruff check .") -> "ValidationPipeline":
+    def default(
+        cls, test_cmd: str = "pytest", lint_cmd: str = "ruff check ."
+    ) -> "ValidationPipeline":
         """Create a default validation pipeline."""
         return cls([
             SyntaxValidator(),

@@ -1,9 +1,9 @@
 """Wrapper for Claude Code CLI interactions."""
 
 import json
-import subprocess
 import logging
-from dataclasses import dataclass, field
+import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -62,10 +62,10 @@ class ClaudeCodeInterface:
             if result.returncode != 0:
                 raise RuntimeError(f"Claude CLI error: {result.stderr}")
             logger.info(f"Claude CLI version: {result.stdout.strip()}")
-        except FileNotFoundError:
+        except FileNotFoundError as err:
             raise RuntimeError(
                 "Claude Code CLI not found. Install with: npm install -g @anthropic-ai/claude-code"
-            )
+            ) from err
     
     def _build_command(
         self,

@@ -2,7 +2,7 @@
 
 import json
 import logging
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -87,7 +87,7 @@ class ImprovementState:
         context_parts = [f"Goal: {self.goal}", "", "Recent progress:"]
         
         for record in recent:
-            status = "✓" if record.success and record.validation_passed else "✗"
+            status = "[OK]" if record.success and record.validation_passed else "[FAIL]"
             context_parts.append(
                 f"  [{status}] Iteration {record.iteration}: {record.result[:200]}..."
             )

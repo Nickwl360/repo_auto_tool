@@ -1,9 +1,9 @@
 """Git utilities for safe repo manipulation."""
 
-import subprocess
 import logging
-from pathlib import Path
+import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,9 @@ class GitHelper:
         try:
             self._run("rev-parse", "--git-dir")
         except subprocess.CalledProcessError:
-            return GitStatus(is_repo=False, current_branch=None, has_changes=False, commit_hash=None)
+            return GitStatus(
+                is_repo=False, current_branch=None, has_changes=False, commit_hash=None
+            )
         
         # Get current branch
         try:
