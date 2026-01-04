@@ -116,6 +116,7 @@ Do NOT simply revert - try to fix the problems properly.
             working_dir=config.repo_path,
             allowed_tools=config.allowed_tools,
             model=config.model,
+            verbose=config.verbose,
         )
 
         self.validators = self._setup_validators()

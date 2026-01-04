@@ -271,8 +271,10 @@ class ClaudeCodeInterface:
         timeout: int = 600,
         max_retries: int = DEFAULT_MAX_RETRIES,
         use_circuit_breaker: bool = True,
+        verbose: bool = False,
     ):
         self.working_dir = Path(working_dir).resolve()
+        self.verbose = verbose
         self.allowed_tools = allowed_tools or [
             "Bash(*)",      # Run any shell command
             "Read(*)",      # Read any file
@@ -452,15 +454,38 @@ class ClaudeCodeInterface:
                                     if block.get("type") == "text":
                                         text = block.get("text", "")
                                         if text:
-                                            print(f"  Claude: {text[:200]}...")
+                                            if self.verbose:
+                                                print(f"  Claude: {text}")
+                                            else:
+                                                # Truncate in normal mode
+                                                display = text[:500]
+                                                if len(text) > 500:
+                                                    display += "..."
+                                                print(f"  Claude: {display}")
                                             result_text += text + "\n"
                                     elif block.get("type") == "tool_use":
                                         tool = block.get("name", "unknown")
-                                        print(f"  [Using tool: {tool}]")
+                                        tool_input = block.get("input", {})
+                                        if self.verbose and tool_input:
+                                            if tool == "Edit":
+                                                fp = tool_input.get("file_path", "")
+                                                print(f"  [Edit: {fp}]")
+                                            elif tool == "Read":
+                                                fp = tool_input.get("file_path", "")
+                                                print(f"  [Read: {fp}]")
+                                            elif tool == "Bash":
+                                                cmd = tool_input.get("command", "")[:80]
+                                                print(f"  [Bash: {cmd}]")
+                                            else:
+                                                print(f"  [{tool}]")
+                                        else:
+                                            print(f"  [{tool}]")
 
                         elif msg_type == "tool_result":
-                            # Tool completed
-                            pass  # Silent for now
+                            if self.verbose:
+                                content = data.get("content", "")
+                                if content and len(str(content)) < 300:
+                                    print(f"  -> {content}")
 
                         elif msg_type == "result":
                             # Final result

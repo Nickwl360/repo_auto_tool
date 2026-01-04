@@ -8,7 +8,8 @@
       "Bash(git stash:*)",
       "Bash(git checkout:*)",
       "Bash(cat:*)",
-      "Bash(./venv/Scripts/ruff check:*)"
+      "Bash(./venv/Scripts/ruff check:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd verbose mode for full Claude output\n\n- Add verbose parameter to ClaudeCodeInterface\n- Show full text in verbose mode, truncate to 500 chars otherwise\n- Show file paths for Edit/Read tools in verbose mode\n- Show Bash commands in verbose mode\n- Show tool results in verbose mode\n- Pass verbose from config to claude interface\n\nGenerated with Claude Code\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
     ]
   }
 }
