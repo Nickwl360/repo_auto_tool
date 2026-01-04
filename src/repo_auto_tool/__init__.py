@@ -36,6 +36,7 @@ from .exceptions import (
     InvalidConfigValueError,
     InvalidPathError,
     LintFailureError,
+    PromptParseError,
     RepoAutoToolError,
     StateCorruptedError,
     StateError,
@@ -67,6 +68,12 @@ from .prompt_adapter import (
     AdaptiveGuidance,
     FailureRecord,
     PromptAdapter,
+)
+from .prompt_parser import (
+    ParsedPrompt,
+    PromptParser,
+    parse_prompt_file,
+    parse_prompt_string,
 )
 from .safety import (
     DangerousCommand,
@@ -198,6 +205,13 @@ __all__ = [
     # Budget errors
     "BudgetError",
     "CostLimitExceededError",
+    # Prompt parsing errors
+    "PromptParseError",
+    # Prompt parsing
+    "ParsedPrompt",
+    "PromptParser",
+    "parse_prompt_file",
+    "parse_prompt_string",
     # Validators
     "Validator",
     "CommandValidator",

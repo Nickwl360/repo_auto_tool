@@ -24,7 +24,8 @@ Exception Hierarchy:
     |   +-- GitNotInitializedError
     |   +-- GitOperationError
     +-- BudgetError
-        +-- CostLimitExceededError
+    |   +-- CostLimitExceededError
+    +-- PromptParseError
 """
 
 from pathlib import Path
@@ -275,3 +276,23 @@ class CostLimitExceededError(BudgetError):
                 "tokens_used": tokens_used,
             }
         )
+
+
+# Prompt Parsing Errors
+
+class PromptParseError(RepoAutoToolError):
+    """Raised when a prompt file cannot be parsed or is invalid.
+
+    This exception is raised when:
+    - The prompt file doesn't exist or can't be read
+    - The prompt content is empty
+    - The prompt format is invalid (bad JSON, YAML, etc.)
+    - Required fields are missing from structured prompts
+    """
+
+    def __init__(self, message: str, file_path: str | None = None):
+        self.file_path = file_path
+        details: dict[str, Any] = {}
+        if file_path:
+            details["file_path"] = file_path
+        super().__init__(message, details=details)

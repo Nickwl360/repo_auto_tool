@@ -1,0 +1,73 @@
+Transform repo-auto-tool into an intelligent, interactive automation system that requires MINIMAL user input. The user should only need to provide a repo path and a goal - everything else should be auto-detected and intelligently handled. CRITICAL: All code must be defensively written with robust error handling - never crash, always gracefully degrade. Here are the capabilities to add:
+
+**1. Rich Interactive TUI**
+- Full terminal UI (like lazygit/htop) with panels for: current task, progress, logs, file changes
+- Real-time status updates with live diff preview
+- Keyboard shortcuts for common actions
+- Fallback to enhanced CLI mode (--no-tui)
+
+**2. Interrupt & Guide System**
+- Ctrl+C pauses execution, shows interactive menu: continue, adjust goal, skip current step, provide feedback, abort
+- Mid-run goal refinement without losing progress
+- Inject additional context or constraints during execution
+
+**3. Smart Prompt Input**
+- Accept prompt from file (--prompt-file path/to/ideas.txt)
+- Intelligently parse unstructured text into structured goals
+- Break down vague ideas into actionable, measurable steps
+- Support structured YAML/Markdown for advanced users
+
+**4. Foreign Repository Support**
+- Work on any git repo via URL (repo-auto-tool https://github.com/user/repo "goal")
+- Fork workflow: clone, create improvement branch, prepare for PR
+- Respect existing repo conventions (detect style, patterns, tooling)
+
+**5. Intelligent Autonomous Behavior**
+- Adaptive: learn from failures, adjust strategy mid-run (smaller steps, different approach)
+- Context-aware: understand codebase patterns, follow existing conventions
+- Predictive: estimate difficulty, warn about risks, suggest better-scoped goals
+- Checkpoint approval: pause at configurable milestones for user feedback
+
+**5b. Smart Defaults & Auto-Understanding (Minimal User Input Required)**
+The tool should automatically understand and apply best practices without being told:
+- Auto-detect and match existing code style (indentation, quotes, naming conventions)
+- No emojis in code/commits unless the codebase already uses them
+- Always brainstorm/plan before making large changes
+- Prefer small, incremental changes over big rewrites
+- Run linting/validation after each change automatically
+- Follow language-specific idioms (Pythonic code, etc.)
+- Preserve existing file structure and patterns
+- Don't add unnecessary comments, docstrings, or type hints unless asked
+- Keep changes focused - don't "improve" unrelated code
+- Auto-detect test framework, package manager, build tools from project files
+- Infer project type (library, CLI, web app) and adjust approach accordingly
+User should only need to provide: target repo + goal. Everything else should be inferred.
+
+**6. Cross-Session Learning**
+- Remember what worked/failed across sessions
+- Build repository-specific knowledge (patterns, gotchas, preferences)
+- Suggest improvements based on historical success patterns
+
+**7. Self-Integration (Dogfooding)**
+- As new features/tools are created, automatically integrate them into the running system
+- Validate new capabilities don't break existing functionality before adoption
+- Use newly created modes, validators, and helpers in subsequent iterations
+- The tool improves itself AND uses those improvements in real-time
+
+**8. New Modes**
+- --research: explore and report without changes
+- --fix: only fix failing tests/lint
+- --refactor <target>: focused refactoring
+- --plan: create detailed plan, wait for approval before executing
+- --watch: monitor for changes, continuously improve
+
+**9. Bulletproof Error Handling**
+- NEVER let exceptions crash the tool - catch and handle gracefully at every level
+- All external calls (subprocess, file I/O, network) must have try/except with fallbacks
+- Handle None values defensively (use `x or ""`, `x or {}`, `getattr(x, 'attr', default)`)
+- Parse JSON/data structures defensively - check types before accessing (isinstance checks)
+- Log errors with full context but continue operation when possible
+- Implement circuit breakers for repeated failures
+- Always validate input data before processing
+
+Maintain backward compatibility with existing CLI. Prioritize ease of use - sensible defaults, minimal required config.

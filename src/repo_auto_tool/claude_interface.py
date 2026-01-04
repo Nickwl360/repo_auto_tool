@@ -362,10 +362,43 @@ class ClaudeCodeInterface:
                 cwd=self.working_dir,
             )
 
-            # Parse JSON output
-            if result.stdout.strip():
+            # Parse JSON output - defensive handling for None/empty stdout
+            stdout = result.stdout or ""
+            stderr = result.stderr or ""
+
+            if stdout.strip():
                 try:
-                    output = json.loads(result.stdout)
+                    output = json.loads(stdout)
+
+                    # Handle both dict and list responses defensively
+                    # Claude CLI may return list format in some cases
+                    if isinstance(output, list):
+                        # Extract from list - try to find the main result
+                        output_dict: dict[str, Any] = {}
+                        result_text = ""
+                        for item in output:
+                            if isinstance(item, dict):
+                                # Merge dict items, later items override
+                                output_dict.update(item)
+                                # Look for result text in various fields
+                                if "result" in item:
+                                    result_text = str(item["result"])
+                                elif "message" in item:
+                                    result_text = str(item["message"])
+                                elif "text" in item:
+                                    result_text = str(item["text"])
+                            elif isinstance(item, str) and not result_text:
+                                result_text = item
+
+                        # Use extracted dict for metadata
+                        output = output_dict
+                        if not output.get("result") and result_text:
+                            output["result"] = result_text
+
+                    # Ensure output is a dict for safe .get() calls
+                    if not isinstance(output, dict):
+                        output = {"result": str(output)}
+
                     # Extract session ID for potential resume
                     self.session_id = output.get("session_id")
 
@@ -380,7 +413,7 @@ class ClaudeCodeInterface:
 
                     return ClaudeResponse(
                         success=result.returncode == 0,
-                        result=output.get("result", output.get("message", str(output))),
+                        result=str(output.get("result") or output.get("message") or str(output)),
                         raw_output=output,
                         session_id=self.session_id,
                         usage=usage,
@@ -391,12 +424,21 @@ class ClaudeCodeInterface:
                     logger.warning(f"Failed to parse Claude output as JSON: {e}")
                     return ClaudeResponse(
                         success=result.returncode == 0,
-                        result=result.stdout,
+                        result=stdout,
                         error=f"JSON parse error: {e}" if result.returncode != 0 else None,
                         model_used=model_used,
                     )
+                except (TypeError, AttributeError) as e:
+                    # Handle unexpected data structure issues
+                    logger.warning(f"Unexpected data structure in Claude output: {e}")
+                    return ClaudeResponse(
+                        success=result.returncode == 0,
+                        result=stdout,
+                        error=f"Data structure error: {e}" if result.returncode != 0 else None,
+                        model_used=model_used,
+                    )
             else:
-                error_msg = result.stderr.strip() if result.stderr else "No output from Claude CLI"
+                error_msg = stderr.strip() if stderr.strip() else "No output from Claude CLI"
                 return ClaudeResponse(
                     success=False,
                     result="",
