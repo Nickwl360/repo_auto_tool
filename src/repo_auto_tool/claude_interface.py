@@ -3,6 +3,9 @@
 This module provides a Python interface to the Claude Code CLI tool,
 handling subprocess execution, JSON parsing, session management,
 and automatic retry with exponential backoff for transient failures.
+
+Includes circuit breaker pattern for fault tolerance - prevents
+cascading failures when Claude API is experiencing issues.
 """
 
 import json
@@ -14,6 +17,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .circuit_breaker import (
+    CircuitBreaker,
+    CircuitBreakerConfig,
+    get_circuit_breaker,
+)
 from .exceptions import ClaudeNotFoundError, ClaudeResponseError, ClaudeTimeoutError
 
 logger = logging.getLogger(__name__)
@@ -245,11 +253,16 @@ class ClaudeResponse:
 class ClaudeCodeInterface:
     """
     Interface to Claude Code CLI for scripted/agentic use.
-    
+
     Claude Code CAN and WILL edit files directly when given permission.
     This is the core mechanism for the self-improving loop.
+
+    Features circuit breaker pattern for fault tolerance:
+    - After repeated failures, temporarily stops making requests
+    - Prevents cascading failures and wasted API calls
+    - Automatically recovers when Claude API becomes healthy
     """
-    
+
     def __init__(
         self,
         working_dir: Path,
@@ -257,6 +270,7 @@ class ClaudeCodeInterface:
         model: str | None = None,
         timeout: int = 600,
         max_retries: int = DEFAULT_MAX_RETRIES,
+        use_circuit_breaker: bool = True,
     ):
         self.working_dir = Path(working_dir).resolve()
         self.allowed_tools = allowed_tools or [
@@ -271,8 +285,33 @@ class ClaudeCodeInterface:
         self.timeout = timeout
         self.max_retries = max_retries
         self.session_id: str | None = None
+        self.use_circuit_breaker = use_circuit_breaker
+
+        # Initialize circuit breaker for fault tolerance
+        # Uses shared instance from registry for consistent state across interfaces
+        self._circuit_breaker: CircuitBreaker[ClaudeResponse] | None = None
+        if use_circuit_breaker:
+            self._circuit_breaker = self._create_circuit_breaker()
 
         self._verify_cli()
+
+    def _create_circuit_breaker(self) -> CircuitBreaker[ClaudeResponse]:
+        """Create or get the circuit breaker for Claude API calls.
+
+        Uses higher thresholds and longer timeout suitable for API calls.
+        The circuit opens after 3 consecutive failures and waits 2 minutes
+        before allowing test requests through again.
+
+        Returns:
+            CircuitBreaker configured for Claude API operations.
+        """
+        config = CircuitBreakerConfig(
+            failure_threshold=3,  # Open after 3 consecutive failures
+            success_threshold=1,  # Close after 1 success in half-open
+            timeout=120.0,  # Wait 2 minutes before testing recovery
+            half_open_max_calls=1,  # Allow 1 test call at a time
+        )
+        return get_circuit_breaker("claude_api", config)
     
     def _verify_cli(self) -> None:
         """Verify Claude Code CLI is installed and accessible.
@@ -488,6 +527,10 @@ class ClaudeCodeInterface:
         Claude WILL edit files in working_dir when instructed.
         Uses exponential backoff with jitter for retries on transient failures.
 
+        If circuit breaker is enabled and open due to repeated failures,
+        returns immediately with an error response to prevent further
+        wasted API calls.
+
         Args:
             prompt: The instruction/prompt to send.
             context: Optional context to prepend.
@@ -504,6 +547,23 @@ class ClaudeCodeInterface:
         # Create prompt preview for error context (used in timeout errors)
         prompt_preview = prompt[:100]
 
+        # Check circuit breaker before making the call
+        if self._circuit_breaker and self._circuit_breaker.is_open():
+            logger.warning(
+                "Circuit breaker is OPEN - Claude API appears unhealthy. "
+                "Rejecting call to prevent cascading failures."
+            )
+            stats = self._circuit_breaker.stats
+            return ClaudeResponse(
+                success=False,
+                result="",
+                error=(
+                    f"Circuit breaker open after {stats.consecutive_failures} failures. "
+                    f"API will be tested again shortly."
+                ),
+                model_used=model_used,
+            )
+
         logger.debug(f"Executing: {' '.join(cmd)}")
         if model_used:
             logger.debug(f"Using model: {model_used}")
@@ -514,17 +574,36 @@ class ClaudeCodeInterface:
         for attempt in range(self.max_retries + 1):
             response = self._execute_single_call(cmd, prompt_preview, model_used)
 
-            # Success - return immediately
+            # Success - notify circuit breaker and return
             if response.success:
+                if self._circuit_breaker:
+                    self._circuit_breaker._handle_success()
                 if attempt > 0:
                     logger.info(f"Call succeeded on retry attempt {attempt}")
                 return response
 
             # Check if this is a retryable error
             if not _is_retryable_error(response.error, None):
-                # Non-retryable error - return immediately
+                # Non-retryable error - don't count against circuit breaker
                 logger.debug(f"Non-retryable error: {response.error}")
                 return response
+
+            # Record failure with circuit breaker
+            if self._circuit_breaker:
+                # Create an exception to pass to circuit breaker
+                exc = ClaudeResponseError(
+                    reason=response.error or "Unknown error",
+                    raw_output=None,
+                )
+                self._circuit_breaker._handle_failure(exc)
+
+                # Check if circuit breaker just opened
+                if self._circuit_breaker.is_open():
+                    logger.error(
+                        f"Circuit breaker opened after {attempt + 1} failures. "
+                        f"Stopping retries."
+                    )
+                    return response
 
             last_response = response
 
@@ -549,6 +628,26 @@ class ClaudeCodeInterface:
             error="All retry attempts exhausted",
             model_used=model_used,
         )
+
+    def get_circuit_breaker_status(self) -> dict[str, Any] | None:
+        """Get the status of the circuit breaker.
+
+        Returns:
+            Dictionary with circuit breaker status, or None if disabled.
+        """
+        if self._circuit_breaker:
+            return self._circuit_breaker.get_status_dict()
+        return None
+
+    def reset_circuit_breaker(self) -> None:
+        """Manually reset the circuit breaker to closed state.
+
+        Use this if you know the Claude API has recovered and want to
+        immediately resume operations without waiting for the timeout.
+        """
+        if self._circuit_breaker:
+            self._circuit_breaker.reset()
+            logger.info("Circuit breaker manually reset")
     
     def analyze(
         self,
