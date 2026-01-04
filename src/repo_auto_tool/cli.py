@@ -14,6 +14,7 @@ from .foreign_repo import (
     ForeignRepoManager,
     RepoConventions,
 )
+from .goal_analyzer import GoalAnalyzer, GoalComplexity, GoalRisk
 from .improver import RepoImprover
 from .logging import setup_logging
 from .prompt_parser import ParsedPrompt, PromptParser
@@ -406,6 +407,18 @@ Examples:
         help="Use shallow clone (faster, less disk space, but limited git history)",
     )
 
+    parser.add_argument(
+        "--skip-goal-analysis",
+        action="store_true",
+        help="Skip automatic goal complexity and risk analysis",
+    )
+
+    parser.add_argument(
+        "--analyze-goal",
+        action="store_true",
+        help="Only analyze the goal (show complexity, risk, suggestions) without running",
+    )
+
     args = parser.parse_args()
 
     # Resolve repo path (handles URLs and local paths)
@@ -656,6 +669,72 @@ Examples:
         console_output=config.verbose,
         json_format=config.output_format == "json",
     )
+
+    # Perform goal analysis (unless skipped or in certain modes)
+    skip_analysis = (
+        args.skip_goal_analysis or
+        args.resume or
+        args.agent_mode or
+        execution_mode in ("analyze", "research")
+    )
+
+    if not skip_analysis and goal:
+        try:
+            goal_analyzer = GoalAnalyzer(repo_path)
+            assessment = goal_analyzer.analyze(goal)
+
+            # Handle --analyze-goal mode
+            if args.analyze_goal:
+                if args.json:
+                    import json as json_module
+                    print(json_module.dumps(assessment.to_dict(), indent=2))
+                else:
+                    print("\n" + assessment.get_summary())
+                return 0
+
+            # Show assessment if not quiet
+            if not args.quiet:
+                print("\n--- Goal Analysis ---")
+                print(f"  Complexity: {assessment.complexity.value.upper()}")
+                print(f"  Risk Level: {assessment.risk.value.upper()}")
+                print(f"  Est. Iterations: {assessment.estimated_iterations}")
+
+                if assessment.is_vague:
+                    print("  [!] Warning: Goal may be too vague")
+
+                if assessment.warnings:
+                    for warning in assessment.warnings[:3]:
+                        print(f"  [!] {warning}")
+
+                if assessment.suggestions:
+                    print("\n  Suggestions:")
+                    for suggestion in assessment.suggestions[:3]:
+                        print(f"    - {suggestion}")
+
+                print()  # Blank line before continuing
+
+            # Warn about high-risk goals
+            if assessment.risk in (GoalRisk.HIGH, GoalRisk.CRITICAL):
+                if not args.quiet:
+                    print("  ** High-risk goal detected - changes will be reviewed carefully **\n")
+
+            # Suggest plan mode for complex goals
+            if (
+                assessment.complexity in (GoalComplexity.COMPLEX, GoalComplexity.MAJOR)
+                and not args.plan
+                and not args.quiet
+            ):
+                print("  Tip: Consider using --plan mode for complex goals\n")
+
+        except Exception as e:
+            # Goal analysis is non-critical - continue if it fails
+            if not args.quiet:
+                print(f"  Note: Goal analysis unavailable ({e})")
+
+    # Handle --analyze-goal when analysis was skipped
+    if args.analyze_goal and skip_analysis:
+        print("Cannot analyze goal in this mode", file=sys.stderr)
+        return 1
 
     # Handle agent modes
     if args.agent_mode:

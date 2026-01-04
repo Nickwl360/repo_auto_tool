@@ -63,6 +63,15 @@ from .exceptions import (
     ValidationError,
 )
 from .git_helper import GitHelper, GitStatus
+from .goal_analyzer import (
+    GoalAnalyzer,
+    GoalAssessment,
+    GoalComplexity,
+    GoalRisk,
+    ProgressEstimate,
+    ProgressTracker,
+    analyze_goal,
+)
 from .improver import RepoImprover
 from .interrupt_handler import (
     InterruptAction,
@@ -230,6 +239,14 @@ __all__ = [
     "ProjectProfile",
     "detect_smart_defaults",
     "get_validation_commands",
+    # Goal analysis
+    "GoalAnalyzer",
+    "GoalAssessment",
+    "GoalComplexity",
+    "GoalRisk",
+    "ProgressEstimate",
+    "ProgressTracker",
+    "analyze_goal",
     # Session metrics
     "SessionMetrics",
     "SuccessMetrics",
