@@ -75,13 +75,18 @@ def get_venv_command(repo_path: Path, command: str) -> str:
     for ext in ["", ".exe", ".bat", ".cmd"]:
         cmd_path = scripts_dir / f"{base_cmd}{ext}"
         if cmd_path.is_file():
-            # Use relative path from repo for portability
-            try:
-                rel_path = cmd_path.relative_to(repo_path)
-                prefix = f"./{rel_path}".replace("\\", "/")
-            except ValueError:
-                # Not relative, use absolute
-                prefix = str(cmd_path)
+            # Use platform-appropriate path format
+            # On Windows, use backslashes and avoid ./ prefix
+            # subprocess with shell=True on Windows uses CMD which doesn't understand ./
+            if sys.platform == "win32":
+                prefix = str(cmd_path)  # Absolute path works reliably
+            else:
+                # Unix: use relative path for portability
+                try:
+                    rel_path = cmd_path.relative_to(repo_path)
+                    prefix = f"./{rel_path}"
+                except ValueError:
+                    prefix = str(cmd_path)
             return f"{prefix} {args}".strip() if args else prefix
 
     return command

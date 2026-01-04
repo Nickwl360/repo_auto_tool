@@ -2,12 +2,102 @@
 
 import json
 import logging
+import random
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+# Retry configuration constants
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_BASE_DELAY = 1.0  # seconds
+DEFAULT_MAX_DELAY = 60.0  # seconds
+DEFAULT_BACKOFF_MULTIPLIER = 2.0
+DEFAULT_JITTER_FACTOR = 0.25  # +/- 25% jitter
+
+
+def _calculate_backoff_delay(
+    attempt: int,
+    base_delay: float = DEFAULT_BASE_DELAY,
+    max_delay: float = DEFAULT_MAX_DELAY,
+    multiplier: float = DEFAULT_BACKOFF_MULTIPLIER,
+    jitter_factor: float = DEFAULT_JITTER_FACTOR,
+) -> float:
+    """Calculate exponential backoff delay with jitter.
+
+    Args:
+        attempt: Current retry attempt (0-indexed).
+        base_delay: Initial delay in seconds.
+        max_delay: Maximum delay cap in seconds.
+        multiplier: Exponential multiplier for each attempt.
+        jitter_factor: Random jitter factor (0.25 = +/- 25%).
+
+    Returns:
+        Delay in seconds with jitter applied.
+    """
+    # Calculate exponential delay
+    delay = base_delay * (multiplier ** attempt)
+
+    # Cap at max_delay
+    delay = min(delay, max_delay)
+
+    # Apply jitter: random value in range [delay * (1 - jitter), delay * (1 + jitter)]
+    jitter_range = delay * jitter_factor
+    delay = delay + random.uniform(-jitter_range, jitter_range)
+
+    # Ensure non-negative
+    return max(0.0, delay)
+
+
+def _is_retryable_error(error: str | None, returncode: int | None) -> bool:
+    """Determine if an error is transient and worth retrying.
+
+    Args:
+        error: Error message string.
+        returncode: Process return code.
+
+    Returns:
+        True if the error appears transient and retryable.
+    """
+    if error is None:
+        return False
+
+    error_lower = error.lower()
+
+    # Network/connection errors (transient)
+    transient_patterns = [
+        "connection",
+        "timeout",
+        "network",
+        "econnreset",
+        "econnrefused",
+        "etimedout",
+        "rate limit",
+        "too many requests",
+        "429",
+        "503",
+        "502",
+        "504",
+        "overloaded",
+        "temporarily unavailable",
+        "service unavailable",
+        "internal server error",
+        "500",
+    ]
+
+    for pattern in transient_patterns:
+        if pattern in error_lower:
+            return True
+
+    # Specific return codes that may be transient
+    if returncode is not None and returncode in (1, 75, 124):
+        # 75 = temp failure, 124 = timeout on some systems
+        return True
+
+    return False
 
 
 @dataclass
