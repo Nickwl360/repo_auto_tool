@@ -11,7 +11,7 @@ from .agents import (
     ReviewerAgent,
     create_agent,
 )
-from .claude_interface import ClaudeCodeInterface, ClaudeResponse
+from .claude_interface import ClaudeCodeInterface, ClaudeResponse, TokenUsage
 from .config import ImproverConfig, find_venv_path, get_venv_command
 from .convergence import (
     ChangeMetrics,
@@ -59,7 +59,7 @@ from .safety import (
     SecretMatch,
     SecretsRedactor,
 )
-from .state import ImprovementState, StatusType, truncate_text
+from .state import ImprovementState, IterationRecord, StatusType, truncate_text
 from .validators import (
     CommandValidator,
     LintValidator,
@@ -77,10 +77,12 @@ __all__ = [
     "RepoImprover",
     "ImproverConfig",
     "ImprovementState",
+    "IterationRecord",
     "StatusType",
     # Claude interface
     "ClaudeCodeInterface",
     "ClaudeResponse",
+    "TokenUsage",
     # Git utilities
     "GitHelper",
     "GitStatus",

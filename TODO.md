@@ -45,7 +45,7 @@
 - [ ] Generate markdown report at end of session
 - [ ] Diff summary with semantic grouping (tests added, refactors, bug fixes)
 - [ ] Progress toward goal estimation (% complete)
-- [ ] Cost/token usage summary
+- [x] Cost/token usage summary
 
 ### Nice to Have (Future)
 

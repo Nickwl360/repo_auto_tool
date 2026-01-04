@@ -1,5 +1,7 @@
 """State management for improvement sessions."""
 
+from __future__ import annotations
+
 import json
 import logging
 from dataclasses import asdict, dataclass, field
@@ -42,7 +44,19 @@ def truncate_text(text: str, max_length: int, suffix: str = "...[truncated]") ->
 
 @dataclass
 class IterationRecord:
-    """Record of a single improvement iteration."""
+    """Record of a single improvement iteration.
+
+    Attributes:
+        iteration: The iteration number (1-indexed).
+        timestamp: ISO format timestamp of when this iteration ran.
+        prompt: The prompt sent to Claude.
+        result: The result/output from Claude.
+        success: Whether Claude call succeeded.
+        validation_passed: Whether validation (lint/tests) passed.
+        git_commit: Git commit hash if changes were committed.
+        error: Error message if iteration failed.
+        token_usage: Token usage statistics for this iteration.
+    """
     iteration: int
     timestamp: str
     prompt: str
@@ -51,12 +65,16 @@ class IterationRecord:
     validation_passed: bool
     git_commit: str | None = None
     error: str | None = None
-    
-    def to_dict(self) -> dict:
-        return asdict(self)
+    token_usage: dict[str, int] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary, handling token_usage specially."""
+        data = asdict(self)
+        # token_usage is already a dict or None, no special handling needed
+        return data
     
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "IterationRecord":
+    def from_dict(cls, data: dict[str, Any]) -> IterationRecord:
         """Create an IterationRecord from a dictionary.
 
         Args:
@@ -95,7 +113,7 @@ class IterationRecord:
             )
 
         # Filter to only expected fields to prevent unexpected kwargs
-        expected_fields = _REQUIRED_ITERATION_FIELDS | {"git_commit", "error"}
+        expected_fields = _REQUIRED_ITERATION_FIELDS | {"git_commit", "error", "token_usage"}
         filtered_data = {k: v for k, v in data.items() if k in expected_fields}
         return cls(**filtered_data)
 
@@ -110,6 +128,7 @@ class ImprovementState:
     Persistent state for an improvement session.
 
     Tracks progress, allows resumption, and provides history for context.
+    Includes cumulative token usage statistics for cost monitoring.
     """
     goal: str
     repo_path: str
@@ -121,6 +140,26 @@ class ImprovementState:
     started_at: str = field(default_factory=lambda: datetime.now().isoformat())
     completed_at: str | None = None
     summary: str | None = None
+    # Cumulative token usage across all iterations
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_cache_read_tokens: int = 0
+    total_cache_creation_tokens: int = 0
+
+    @property
+    def total_tokens(self) -> int:
+        """Total tokens used in this session (input + output)."""
+        return self.total_input_tokens + self.total_output_tokens
+
+    def get_token_summary(self) -> dict[str, int]:
+        """Get a summary of token usage for this session."""
+        return {
+            "total_tokens": self.total_tokens,
+            "input_tokens": self.total_input_tokens,
+            "output_tokens": self.total_output_tokens,
+            "cache_read_tokens": self.total_cache_read_tokens,
+            "cache_creation_tokens": self.total_cache_creation_tokens,
+        }
     
     def record_iteration(
         self,
@@ -130,11 +169,21 @@ class ImprovementState:
         validation_passed: bool,
         git_commit: str | None = None,
         error: str | None = None,
+        token_usage: dict[str, int] | None = None,
     ) -> None:
         """Record the results of an iteration.
 
         Automatically truncates long results and errors to prevent
         unbounded state file growth and reduce context overhead.
+
+        Args:
+            prompt: The prompt sent to Claude.
+            result: The result/output from Claude.
+            success: Whether the Claude call succeeded.
+            validation_passed: Whether validation passed.
+            git_commit: Git commit hash if changes were committed.
+            error: Error message if iteration failed.
+            token_usage: Token usage dict with input_tokens, output_tokens, etc.
         """
         self.current_iteration += 1
         self.total_iterations += 1
@@ -146,6 +195,19 @@ class ImprovementState:
         if len(result) > MAX_RESULT_LENGTH:
             logger.debug(f"Truncated result from {len(result)} to {MAX_RESULT_LENGTH} chars")
 
+        # Accumulate token usage if provided
+        if token_usage:
+            self.total_input_tokens += token_usage.get("input_tokens", 0)
+            self.total_output_tokens += token_usage.get("output_tokens", 0)
+            self.total_cache_read_tokens += token_usage.get("cache_read_tokens", 0)
+            self.total_cache_creation_tokens += token_usage.get("cache_creation_tokens", 0)
+            logger.debug(
+                f"Iteration {self.current_iteration} tokens: "
+                f"{token_usage.get('input_tokens', 0)} in, "
+                f"{token_usage.get('output_tokens', 0)} out. "
+                f"Session total: {self.total_tokens}"
+            )
+
         record = IterationRecord(
             iteration=self.current_iteration,
             timestamp=datetime.now().isoformat(),
@@ -155,6 +217,7 @@ class ImprovementState:
             validation_passed=validation_passed,
             git_commit=git_commit,
             error=truncated_error,
+            token_usage=token_usage,
         )
         self.iterations.append(record)
 
@@ -220,6 +283,11 @@ class ImprovementState:
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "summary": self.summary,
+            # Token usage statistics
+            "total_input_tokens": self.total_input_tokens,
+            "total_output_tokens": self.total_output_tokens,
+            "total_cache_read_tokens": self.total_cache_read_tokens,
+            "total_cache_creation_tokens": self.total_cache_creation_tokens,
         }
 
         try:
@@ -233,7 +301,7 @@ class ImprovementState:
             raise StateSaveError(path, f"OS error: {e}") from e
     
     @classmethod
-    def load(cls, path: Path) -> "ImprovementState":
+    def load(cls, path: Path) -> ImprovementState:
         """Load state from JSON file.
 
         Args:
@@ -292,10 +360,12 @@ class ImprovementState:
             # Re-raise with correct path
             raise StateCorruptedError(path, e.reason) from e
 
-        # Filter to expected fields
+        # Filter to expected fields (including token usage stats)
         expected_fields = {
             "goal", "repo_path", "status", "current_iteration", "total_iterations",
-            "consecutive_failures", "started_at", "completed_at", "summary"
+            "consecutive_failures", "started_at", "completed_at", "summary",
+            "total_input_tokens", "total_output_tokens",
+            "total_cache_read_tokens", "total_cache_creation_tokens",
         }
         filtered_data = {k: v for k, v in data.items() if k in expected_fields}
 
@@ -304,7 +374,7 @@ class ImprovementState:
         return state
     
     @classmethod
-    def load_or_create(cls, path: Path, goal: str, repo_path: str) -> "ImprovementState":
+    def load_or_create(cls, path: Path, goal: str, repo_path: str) -> ImprovementState:
         """Load existing state or create new one.
 
         Args:

@@ -264,6 +264,7 @@ Do NOT simply revert - try to fix the problems properly.
                 success=False,
                 validation_passed=False,
                 error=response.error,
+                token_usage=response.usage.to_dict() if response.usage else None,
             )
             return False
         
@@ -289,6 +290,7 @@ Do NOT simply revert - try to fix the problems properly.
                 result=result,
                 success=True,
                 validation_passed=True,
+                token_usage=response.usage.to_dict() if response.usage else None,
             )
             self.state.mark_complete(result)
             return True
@@ -302,6 +304,7 @@ Do NOT simply revert - try to fix the problems properly.
                 success=False,
                 validation_passed=False,
                 error="Blocked",
+                token_usage=response.usage.to_dict() if response.usage else None,
             )
             return False
         
@@ -332,17 +335,18 @@ Do NOT simply revert - try to fix the problems properly.
                 success=True,
                 validation_passed=True,
                 git_commit=commit_hash,
+                token_usage=response.usage.to_dict() if response.usage else None,
             )
             return True
-        
+
         else:
             logger.warning("[FAIL] Validation failed")
             failure_summary = self.validators.get_failure_summary(validation_results)
-            
+
             # Rollback changes
             if self.git:
                 self.git.rollback()
-            
+
             # Record the failure (Claude will see this in context next iteration)
             self.state.record_iteration(
                 prompt=task,
@@ -350,6 +354,7 @@ Do NOT simply revert - try to fix the problems properly.
                 success=True,  # Claude succeeded, validation failed
                 validation_passed=False,
                 error=failure_summary,
+                token_usage=response.usage.to_dict() if response.usage else None,
             )
             return False
     
@@ -461,13 +466,90 @@ Do NOT simply revert - try to fix the problems properly.
         logger.info(f"{'='*60}")
         logger.info(f"Status: {self.state.status}")
         logger.info(f"Iterations: {self.state.total_iterations}")
-        
+
         successful = sum(1 for it in self.state.iterations if it.success and it.validation_passed)
         logger.info(f"Successful iterations: {successful}")
-        
+
         if self.state.summary:
             logger.info(f"Summary: {self.state.summary}")
-        
+
+        # Token usage and cost summary
+        self._print_token_summary()
+
         if self.git:
             logger.info(f"Changes on branch: {self.git.branch_name}")
             logger.info(f"Diff summary:\n{self.git.get_diff_summary()}")
+
+    def _print_token_summary(self) -> None:
+        """Print token usage and estimated cost summary.
+
+        Uses Claude API pricing (as of 2024) for cost estimates:
+        - Claude 3.5 Sonnet: $3/MTok input, $15/MTok output
+        - Claude 3 Opus: $15/MTok input, $75/MTok output
+        - Cache reads are discounted (10% of normal input cost)
+        """
+        token_summary = self.state.get_token_summary()
+        total = token_summary["total_tokens"]
+
+        if total == 0:
+            logger.info("Token usage: No token data recorded")
+            return
+
+        logger.info("")
+        logger.info("TOKEN USAGE:")
+        logger.info(f"  Input tokens:  {token_summary['input_tokens']:,}")
+        logger.info(f"  Output tokens: {token_summary['output_tokens']:,}")
+
+        if token_summary["cache_read_tokens"] > 0:
+            logger.info(f"  Cache reads:   {token_summary['cache_read_tokens']:,}")
+        if token_summary["cache_creation_tokens"] > 0:
+            logger.info(f"  Cache writes:  {token_summary['cache_creation_tokens']:,}")
+
+        logger.info(f"  Total tokens:  {total:,}")
+
+        # Estimate cost based on model (default to Sonnet pricing)
+        cost = self._estimate_cost(token_summary)
+        if cost > 0:
+            logger.info(f"  Est. cost:     ${cost:.4f}")
+
+    def _estimate_cost(self, token_summary: dict[str, int]) -> float:
+        """Estimate API cost based on token usage.
+
+        Args:
+            token_summary: Dictionary with token counts.
+
+        Returns:
+            Estimated cost in USD.
+
+        Note:
+            Pricing is approximate and based on public Claude API rates.
+            Actual costs may vary based on account, discounts, or API changes.
+        """
+        # Pricing per million tokens (as of late 2024)
+        # These are approximate public rates - actual may vary
+        model = self.config.model or "claude-sonnet-4-20250514"
+        model_lower = model.lower()
+
+        if "opus" in model_lower:
+            input_cost_per_mtok = 15.0
+            output_cost_per_mtok = 75.0
+        elif "haiku" in model_lower:
+            input_cost_per_mtok = 0.25
+            output_cost_per_mtok = 1.25
+        else:  # Default to Sonnet pricing
+            input_cost_per_mtok = 3.0
+            output_cost_per_mtok = 15.0
+
+        # Cache reads are typically 10% of normal input cost
+        cache_read_cost_per_mtok = input_cost_per_mtok * 0.1
+
+        # Calculate costs
+        input_tokens = token_summary["input_tokens"]
+        output_tokens = token_summary["output_tokens"]
+        cache_read_tokens = token_summary["cache_read_tokens"]
+
+        input_cost = (input_tokens / 1_000_000) * input_cost_per_mtok
+        output_cost = (output_tokens / 1_000_000) * output_cost_per_mtok
+        cache_cost = (cache_read_tokens / 1_000_000) * cache_read_cost_per_mtok
+
+        return input_cost + output_cost + cache_cost
