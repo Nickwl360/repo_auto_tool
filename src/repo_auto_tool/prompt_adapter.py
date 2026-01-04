@@ -148,11 +148,18 @@ class PromptAdapter:
     The adapter maintains a rolling window of recent failures and
     provides contextual hints based on the types of errors encountered.
 
+    Success decay is implemented to gradually reduce failure weights
+    after consecutive successful iterations, preventing stale guidance
+    from persisting indefinitely.
+
     Attributes:
         failure_counts: Counter of error types encountered.
         recent_messages: Recent error messages by type (for context).
         max_recent_messages: Maximum messages to keep per error type.
         custom_guidance: Additional guidance provided dynamically.
+        decay_rate: How much to decay failure counts per success (0.0-1.0).
+        consecutive_successes: Count of consecutive successful iterations.
+        decay_threshold: Number of consecutive successes before decay starts.
     """
     failure_counts: Counter[str] = field(default_factory=Counter)
     recent_messages: dict[str, list[str]] = field(default_factory=dict)
@@ -161,6 +168,10 @@ class PromptAdapter:
     _guidance_library: list[AdaptiveGuidance] = field(
         default_factory=lambda: list(DEFAULT_GUIDANCE)
     )
+    # Success decay configuration
+    decay_rate: float = 0.3  # Reduce failure counts by 30% per decay event
+    consecutive_successes: int = 0
+    decay_threshold: int = 2  # Require 2 consecutive successes before decay
 
     def record_failure(self, error_type: str, message: str | None = None) -> None:
         """Record a failure occurrence.
@@ -169,6 +180,9 @@ class PromptAdapter:
             error_type: Category of the error (e.g., "syntax_error").
             message: Optional error message for context.
         """
+        # Reset consecutive success counter on any failure
+        self.consecutive_successes = 0
+
         self.failure_counts[error_type] += 1
 
         if message:
@@ -189,13 +203,51 @@ class PromptAdapter:
 
         Successes gradually reduce the weight of past failures,
         preventing stale guidance from persisting indefinitely.
+
+        The decay mechanism requires consecutive successes before
+        activating, ensuring that a single lucky success doesn't
+        immediately remove important guidance.
+
+        Decay formula: new_count = old_count * (1 - decay_rate)
+        With decay_rate=0.3, after 2+ consecutive successes:
+        - Count 5 -> 3.5 -> 2.45 -> 1.72 -> 1.20 -> 0.84 -> removed
+        - Roughly 6 consecutive successes to fully clear a count of 5
         """
-        # Decay failure counts slightly on success
+        self.consecutive_successes += 1
+
+        # Only decay after reaching the threshold of consecutive successes
+        if self.consecutive_successes < self.decay_threshold:
+            logger.debug(
+                f"Success recorded ({self.consecutive_successes}/{self.decay_threshold} "
+                "before decay activates)"
+            )
+            return
+
+        # Apply decay to all failure counts
+        decayed_any = False
         for error_type in list(self.failure_counts.keys()):
-            if self.failure_counts[error_type] > 0:
-                # Reduce by 0.5 (will be truncated to int in threshold checks)
-                # This allows guidance to fade after consistent success
-                pass  # Currently we just track, decay could be added later
+            old_count = self.failure_counts[error_type]
+            if old_count > 0:
+                # Apply exponential decay
+                new_count = old_count * (1.0 - self.decay_rate)
+
+                if new_count < 0.5:
+                    # Remove entries that have decayed to near-zero
+                    del self.failure_counts[error_type]
+                    # Also clean up recent messages for this type
+                    if error_type in self.recent_messages:
+                        del self.recent_messages[error_type]
+                    logger.debug(f"Removed decayed error type: {error_type}")
+                else:
+                    # Store as float for gradual decay (Counter allows floats)
+                    self.failure_counts[error_type] = new_count
+                decayed_any = True
+
+        if decayed_any:
+            logger.info(
+                f"Applied success decay (consecutive={self.consecutive_successes}): "
+                f"remaining counts={dict(self.failure_counts)}"
+            )
 
     def add_custom_guidance(
         self,
@@ -322,24 +374,29 @@ class PromptAdapter:
         self.record_failure(error_type, error)
 
     def get_stats(self) -> dict[str, Any]:
-        """Get statistics about recorded failures.
+        """Get statistics about recorded failures and decay state.
 
         Returns:
-            Dictionary with failure statistics.
+            Dictionary with failure statistics and success decay info.
         """
         total_failures = sum(self.failure_counts.values())
+        # Round failure counts for display (they may be floats due to decay)
+        rounded_counts = {k: round(v, 1) for k, v in self.failure_counts.items()}
         return {
-            "total_failures": total_failures,
-            "failure_counts": dict(self.failure_counts),
+            "total_failures": round(total_failures, 1),
+            "failure_counts": rounded_counts,
             "top_errors": self.failure_counts.most_common(3),
             "active_guidance_count": len(self.get_applicable_guidance()),
+            "consecutive_successes": self.consecutive_successes,
+            "decay_active": self.consecutive_successes >= self.decay_threshold,
         }
 
     def reset(self) -> None:
-        """Reset all recorded failures and guidance."""
+        """Reset all recorded failures, guidance, and decay state."""
         self.failure_counts.clear()
         self.recent_messages.clear()
         self.custom_guidance.clear()
+        self.consecutive_successes = 0
         logger.info("PromptAdapter reset")
 
     @classmethod
@@ -352,23 +409,34 @@ class PromptAdapter:
         This factory method allows bootstrapping the adapter from
         past session data, useful when resuming sessions.
 
+        The method properly tracks both failures and successes from history,
+        including counting consecutive trailing successes to restore the
+        decay state accurately.
+
         Args:
             iterations: List of iteration records with 'error' field.
 
         Returns:
-            A PromptAdapter pre-populated with failure patterns.
+            A PromptAdapter pre-populated with failure patterns and decay state.
         """
         adapter = cls()
 
+        # Process all iterations to record failures and track success patterns
         for it in iterations:
-            if not it.get("validation_passed") and it.get("error"):
+            if it.get("validation_passed"):
+                # Record success to build up consecutive success count
+                adapter.record_success()
+            elif it.get("error"):
+                # Record failure (this also resets consecutive success count)
                 adapter.record_from_validation_error(it["error"])
 
         stats = adapter.get_stats()
-        if stats["total_failures"] > 0:
+        if stats["total_failures"] > 0 or stats["consecutive_successes"] > 0:
             logger.info(
-                f"PromptAdapter initialized with {stats['total_failures']} "
-                f"failures from history: {stats['failure_counts']}"
+                f"PromptAdapter initialized from history: "
+                f"failures={stats['failure_counts']}, "
+                f"consecutive_successes={stats['consecutive_successes']}, "
+                f"decay_active={stats['decay_active']}"
             )
 
         return adapter
