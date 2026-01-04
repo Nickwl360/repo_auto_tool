@@ -1,44 +1,39 @@
-# repo-improver TODO
+# repo-auto-tool TODO
 
 ## Setup Status
-- [ ] Initial build & local install
-- [ ] Push to GitHub
-- [ ] First self-improvement run
+- [x] Initial build & local install
+- [x] Push to GitHub
+- [x] First self-improvement run
 
 ---
 
 ## Feature Roadmap
 
-### 🔴 High Priority
+### High Priority (Production Readiness)
 
-#### Error Handling
-- [ ] Add custom exception classes (`ImproverError`, `ValidationError`, `ClaudeAPIError`)
-- [ ] Wrap all subprocess calls with proper error catching
-- [ ] Add retry logic for transient Claude CLI failures
-- [ ] Graceful degradation when validators fail to run (vs fail validation)
-- [ ] Better error messages with actionable suggestions
+#### Testing
+- [ ] Add unit tests for core modules (target 80% coverage)
+- [ ] Add integration tests for the full improvement loop
+- [ ] Add tests for edge cases (network failures, malformed state)
 
-#### Logging
-- [ ] Structured logging (JSON format option)
-- [ ] Log levels configurable via CLI (`--log-level DEBUG`)
-- [ ] Separate log streams (console vs file)
-- [ ] Log rotation for long-running sessions
-- [ ] Include token/cost tracking in logs (if Claude CLI exposes it)
-- [ ] Rich console output with progress bars (optional)
+#### Documentation
+- [ ] Add docstrings to remaining public functions
+- [ ] Document all CLI flags with examples
+- [ ] Add CONTRIBUTING.md for contributors
 
-### 🟡 Medium Priority
+### Medium Priority (Enhanced Functionality)
 
 #### Goal Modes
 - [ ] **Macro Goals Mode**: Large architectural changes, multi-phase planning
   - Pre-planning phase: Claude creates a plan before executing
   - Milestone tracking within a single goal
   - Dependency-aware task ordering
-  
+
 - [ ] **Short/Research Mode**: Quick exploration, no commits
   - `--research` flag: analyze only, suggest changes, don't apply
   - `--dry-run`: show what would change without doing it
   - Single-shot mode: one improvement, then stop
-  
+
 - [ ] **Fix/Structure Mode**: Targeted repairs
   - `--fix-only`: only fix failing tests/lint, no new features
   - `--structure`: reorganize code without changing behavior
@@ -52,14 +47,13 @@
 - [ ] Progress toward goal estimation (% complete)
 - [ ] Cost/token usage summary
 
-### 🟢 Nice to Have
+### Nice to Have (Future)
 
 #### State Management
 - [ ] Multiple named sessions per repo
 - [ ] State diffing (compare two sessions)
 - [ ] Export state to shareable format
 - [ ] Import goals/config from YAML file
-- [ ] Checkpoint/restore mid-iteration
 
 #### Integration
 - [ ] GitHub Actions workflow for CI improvement
@@ -76,27 +70,53 @@
 ---
 
 ## Completed
-- [x] Initial package structure
-- [x] CLI interface
-- [x] Basic improvement loop
+
+### Core Features
+- [x] Initial package structure with src-layout
+- [x] CLI interface with argparse
+- [x] Basic improvement loop (analyze -> improve -> validate -> commit)
 - [x] Git safety (branching, commits, rollback)
-- [x] Validation pipeline (tests, lint)
+- [x] Validation pipeline (tests, lint, custom validators)
 - [x] State persistence & resumability
-- [x] Bootstrap script
+- [x] Bootstrap script for self-improvement
+
+### Error Handling (All Done)
+- [x] Custom exception hierarchy (RepoAutoToolError and 13+ subclasses)
+- [x] Subprocess calls wrapped with proper error catching
+- [x] Retry logic with exponential backoff for transient Claude CLI failures
+- [x] Graceful degradation when validators fail to run
+- [x] Structured error messages with details
+
+### Logging (All Done)
+- [x] Structured logging (JSON format option via --json)
+- [x] Log levels configurable via CLI (--log-level DEBUG|INFO|WARNING|ERROR|CRITICAL)
+- [x] Separate log streams (console vs file)
+- [x] JSONFormatter and ConsoleFormatter implementations
+
+### Safety & Robustness (All Done)
+- [x] Secret redaction (API keys, tokens, AWS credentials)
+- [x] Dangerous command detection
+- [x] Convergence detection to prevent infinite loops
+- [x] Checkpoint support during long runs
+- [x] Context truncation to manage token usage
+
+### Agents (All Done)
+- [x] PreAnalysisAgent - analyzes codebase and suggests goals
+- [x] GoalDecomposerAgent - breaks goals into actionable steps
+- [x] ReviewerAgent - reviews changes and provides feedback
+- [x] Agent mode CLI support (--agent-mode)
+
+### Package & Distribution (All Done)
+- [x] pyproject.toml with hatchling build
+- [x] py.typed marker for type checking support
+- [x] Comprehensive __init__.py exports (80+ public items)
+- [x] Virtual environment detection and command resolution
 
 ---
 
-## Notes
-
-### First Self-Improvement Goals (in order)
-1. "Add comprehensive error handling with custom exceptions"
-2. "Add structured logging with configurable levels"
-3. "Add unit tests for all modules with 80% coverage"
-4. "Add --research and --fix-only modes"
-5. "Add session summary reports"
-
-### Architecture Decisions
+## Architecture Decisions
 - Keep it simple: single-threaded, synchronous for now
 - State is JSON for easy inspection/debugging
 - Git is optional but recommended
-- Validators are pluggable
+- Validators are pluggable via CommandValidator
+- No external runtime dependencies (pure stdlib)
