@@ -102,6 +102,13 @@ from .session_metrics import (
     SuccessMetrics,
     TimeMetrics,
 )
+from .smart_defaults import (
+    DetectedTools,
+    ProjectProfile,
+    SmartDefaults,
+    detect_smart_defaults,
+    get_validation_commands,
+)
 from .state import ImprovementState, IterationRecord, StatusType, truncate_text
 from .validators import (
     CommandValidator,
@@ -188,6 +195,12 @@ __all__ = [
     "SessionHistory",
     "SessionSummary",
     "ErrorPattern",
+    # Smart defaults
+    "SmartDefaults",
+    "DetectedTools",
+    "ProjectProfile",
+    "detect_smart_defaults",
+    "get_validation_commands",
     # Session metrics
     "SessionMetrics",
     "SuccessMetrics",

@@ -1,13 +1,18 @@
 """Configuration for the repo improver."""
 
+from __future__ import annotations
+
+import logging
 import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from .exceptions import InvalidConfigValueError, InvalidPathError
 from .logging import VALID_LOG_LEVELS
+
+logger = logging.getLogger(__name__)
 
 
 def find_venv_path(repo_path: Path) -> Path | None:
@@ -151,6 +156,11 @@ class ImproverConfig:
     log_file: Path | None = None
     log_level: str = "INFO"
     output_format: Literal["text", "json"] = "text"
+
+    # Repository conventions (auto-detected)
+    conventions: Any = None  # RepoConventions from foreign_repo module
+    is_foreign_repo: bool = False  # True if cloned from URL
+    original_url: str | None = None  # Original URL if cloned
     
     def __post_init__(self) -> None:
         """Initialize and validate configuration.
@@ -245,3 +255,72 @@ class ImproverConfig:
                 self.max_cost,
                 "Must be a positive number (e.g., 5.00 for $5.00)"
             )
+
+    @classmethod
+    def with_smart_defaults(
+        cls,
+        repo_path: Path | str,
+        goal: str,
+        test_command: str | None = None,
+        lint_command: str | None = None,
+        **kwargs: Any,
+    ) -> ImproverConfig:
+        """Create a config with smart auto-detected defaults.
+
+        This factory method analyzes the repository and automatically
+        configures sensible defaults for test commands, lint commands,
+        and other settings based on detected project characteristics.
+
+        Args:
+            repo_path: Path to the repository.
+            goal: The improvement goal.
+            test_command: Override for test command (None = auto-detect).
+            lint_command: Override for lint command (None = auto-detect).
+            **kwargs: Additional configuration options.
+
+        Returns:
+            ImproverConfig with smart defaults applied.
+        """
+        from .smart_defaults import SmartDefaults
+
+        repo_path = Path(repo_path).resolve()
+
+        # Use SmartDefaults to detect project settings
+        try:
+            analyzer = SmartDefaults(repo_path)
+            profile = analyzer.analyze()
+
+            detected_tools = profile.detected_tools
+
+            # Apply auto-detected commands if not overridden
+            if test_command is None:
+                test_command = detected_tools.test_command or "pytest"
+            if lint_command is None:
+                lint_command = detected_tools.lint_command or "ruff check ."
+
+            # Log what was detected
+            logger.info(f"Smart defaults: project_type={profile.project_type}, "
+                       f"language={profile.primary_language}")
+            if detected_tools.test_framework:
+                logger.info(f"  Test framework: {detected_tools.test_framework}")
+            if detected_tools.linter:
+                logger.info(f"  Linter: {detected_tools.linter}")
+
+            # Generate and append guidance to goal if we have style info
+            if profile.code_style:
+                guidance = profile.generate_guidance()
+                if guidance:
+                    goal = f"{goal}\n\n{guidance}"
+
+        except Exception as e:
+            logger.warning(f"Smart defaults detection failed, using defaults: {e}")
+            test_command = test_command or "pytest"
+            lint_command = lint_command or "ruff check ."
+
+        return cls(
+            repo_path=repo_path,
+            goal=goal,
+            test_command=test_command,
+            lint_command=lint_command,
+            **kwargs,
+        )

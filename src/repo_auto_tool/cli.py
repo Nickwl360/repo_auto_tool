@@ -1,15 +1,25 @@
 """CLI entry point for repo-improver."""
 
 import argparse
+import atexit
 import sys
 from pathlib import Path
 
 from .agents import AgentMode, create_agent
 from .config import ImproverConfig
-from .exceptions import PromptParseError
+from .exceptions import ConfigurationError, PromptParseError
+from .foreign_repo import (
+    ClonedRepo,
+    ForeignRepoError,
+    ForeignRepoManager,
+    RepoConventions,
+)
 from .improver import RepoImprover
 from .logging import setup_logging
 from .prompt_parser import ParsedPrompt, PromptParser
+
+# Global manager for cleanup on exit
+_foreign_repo_manager: ForeignRepoManager | None = None
 
 
 def _run_agent_mode(args: argparse.Namespace, config: "ImproverConfig") -> int:
@@ -100,6 +110,10 @@ Examples:
   # With custom settings
   repo-improver . "Improve test coverage to 80%" --max-iterations 50 --test-cmd "pytest --cov"
 
+  # Work on a remote repository (clones automatically)
+  repo-improver https://github.com/user/repo "Add documentation"
+  repo-improver user/repo "Fix linting issues"  # GitHub shorthand
+
   # Read goal from a file (supports .txt, .md, .yaml, .json)
   repo-improver . --prompt-file ideas.md
 
@@ -120,13 +134,14 @@ Examples:
   repo-improver . --resume
 """,
     )
-    
+
     parser.add_argument(
         "repo_path",
-        type=Path,
+        type=str,  # String to support both paths and URLs
         nargs="?",
-        default=Path.cwd(),
-        help="Path to the repository (default: current directory)",
+        default=".",
+        help="Path to repository or URL (GitHub/GitLab/etc). Supports: "
+             "local path, https://github.com/user/repo, user/repo (GitHub shorthand)",
     )
     
     parser.add_argument(
@@ -165,15 +180,15 @@ Examples:
     parser.add_argument(
         "--test-cmd",
         type=str,
-        default="pytest",
-        help="Test command (default: pytest)",
+        default=None,
+        help="Test command (auto-detected or defaults to pytest)",
     )
-    
+
     parser.add_argument(
         "--lint-cmd",
         type=str,
-        default="ruff check .",
-        help="Lint command (default: ruff check .)",
+        default=None,
+        help="Lint command (auto-detected or defaults to ruff check .)",
     )
     
     parser.add_argument(
@@ -354,7 +369,91 @@ Examples:
         help="Show detailed session metrics report at the end of the run",
     )
 
+    # Foreign repository options
+    parser.add_argument(
+        "--workspace-dir",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help="Directory for cloning remote repositories (default: temp dir)",
+    )
+
+    parser.add_argument(
+        "--keep-clone",
+        action="store_true",
+        help="Don't delete cloned repository on exit (useful for inspection)",
+    )
+
+    parser.add_argument(
+        "--shallow-clone",
+        action="store_true",
+        help="Use shallow clone (faster, less disk space, but limited git history)",
+    )
+
     args = parser.parse_args()
+
+    # Resolve repo path (handles URLs and local paths)
+    global _foreign_repo_manager
+    cloned_repo: ClonedRepo | None = None
+    conventions: RepoConventions | None = None
+    repo_path: Path
+
+    try:
+        # Check if it's a URL or local path
+        manager = ForeignRepoManager(
+            workspace_dir=args.workspace_dir,
+            cleanup_on_exit=not args.keep_clone,
+        )
+        _foreign_repo_manager = manager  # Keep reference for cleanup
+
+        if manager.is_url(args.repo_path):
+            if not args.quiet:
+                print(f"Cloning repository: {args.repo_path}")
+
+            cloned_repo = manager.clone(
+                args.repo_path,
+                depth=1 if args.shallow_clone else None,
+            )
+            repo_path = cloned_repo.local_path
+            conventions = manager.detect_conventions(repo_path)
+            cloned_repo.conventions = conventions
+
+            if not args.quiet:
+                print(f"  Cloned to: {repo_path}")
+                if conventions:
+                    print(f"  Detected: {conventions.primary_language} {conventions.project_type}")
+                    if conventions.test_framework:
+                        print(f"  Test framework: {conventions.test_framework}")
+                    if conventions.linter:
+                        print(f"  Linter: {conventions.linter}")
+
+            # Register cleanup
+            if not args.keep_clone:
+                atexit.register(lambda: manager.cleanup(cloned_repo))
+        else:
+            # Local path
+            repo_path = Path(args.repo_path).resolve()
+            if not repo_path.exists():
+                parser.error(f"Repository path does not exist: {repo_path}")
+            if not repo_path.is_dir():
+                parser.error(f"Repository path is not a directory: {repo_path}")
+
+            # Detect conventions for local repos too
+            try:
+                conventions = manager.detect_conventions(repo_path)
+            except Exception as e:
+                if not args.quiet:
+                    print(f"Warning: Could not detect conventions: {e}")
+
+    except ForeignRepoError as e:
+        parser.error(f"Failed to clone repository: {e}")
+    except ConfigurationError as e:
+        parser.error(str(e))
+    except Exception as e:
+        parser.error(f"Unexpected error resolving repository: {e}")
+
+    # Store resolved path back in args for use by agent modes
+    args.repo_path = repo_path
 
     # Determine the execution mode
     execution_mode = "standard"
@@ -438,16 +537,83 @@ Examples:
     else:
         goal = args.goal or "Analyze and report on code quality"
     
+    # Enhance goal with conventions guidance if detected
+    goal_with_conventions = goal
+    if conventions:
+        convention_guidance = conventions.to_prompt_guidance()
+        goal_with_conventions = f"{goal}\n\n{convention_guidance}"
+
+    # Auto-configure based on conventions or smart defaults
+    test_cmd = args.test_cmd
+    lint_cmd = args.lint_cmd
+
+    # Use SmartDefaults for auto-detection if not specified
+    if test_cmd is None or lint_cmd is None:
+        try:
+            from .smart_defaults import SmartDefaults
+            analyzer = SmartDefaults(repo_path)
+            profile = analyzer.analyze()
+
+            if not args.quiet:
+                print(f"  Project type: {profile.project_type}")
+                print(f"  Primary language: {profile.primary_language}")
+
+            # Apply detected commands
+            if test_cmd is None:
+                test_cmd = profile.detected_tools.test_command
+                if test_cmd and not args.quiet:
+                    print(f"  Auto-detected test command: {test_cmd}")
+
+            if lint_cmd is None:
+                lint_cmd = profile.detected_tools.lint_command
+                if lint_cmd and not args.quiet:
+                    print(f"  Auto-detected lint command: {lint_cmd}")
+
+            # Generate additional guidance from profile
+            if profile.code_style:
+                profile_guidance = profile.generate_guidance()
+                if profile_guidance:
+                    goal_with_conventions = f"{goal_with_conventions}\n\n{profile_guidance}"
+
+        except Exception as e:
+            if not args.quiet:
+                print(f"  Warning: Smart detection failed: {e}")
+
+    # Fall back to conventions-based detection if smart defaults didn't find anything
+    if test_cmd is None:
+        if conventions and conventions.test_framework:
+            if conventions.test_framework == "pytest":
+                test_cmd = "pytest"
+            elif conventions.test_framework in ("jest", "mocha", "vitest"):
+                test_cmd = "npm test"
+            else:
+                test_cmd = "pytest"
+        else:
+            test_cmd = "pytest"
+
+    if lint_cmd is None:
+        if conventions and conventions.linter:
+            if conventions.linter == "ruff":
+                lint_cmd = "ruff check ."
+            elif conventions.linter == "eslint":
+                lint_cmd = "npm run lint"
+            elif conventions.linter == "flake8":
+                lint_cmd = "flake8 ."
+            else:
+                lint_cmd = "ruff check ."
+        else:
+            lint_cmd = "ruff check ."
+
     # Build config
     config = ImproverConfig(
-        repo_path=args.repo_path,
-        goal=goal,
+        repo_path=repo_path,
+        goal=goal_with_conventions,
         max_iterations=args.max_iterations,
         max_consecutive_failures=args.max_failures,
         run_tests=not args.no_tests,
-        test_command=args.test_cmd,
+        test_command=test_cmd,
         run_linter=not args.no_lint,
-        lint_command=args.lint_cmd,
+        lint_command=lint_cmd,
         parallel_validation=args.parallel_validation,
         use_git=not args.no_git,
         branch_name=args.branch,
@@ -462,6 +628,9 @@ Examples:
         log_level=args.log_level,
         log_file=args.log_file,
         output_format="json" if args.json else "text",
+        conventions=conventions,
+        is_foreign_repo=cloned_repo is not None,
+        original_url=cloned_repo.original_url if cloned_repo else None,
     )
 
     # Setup logging based on config
