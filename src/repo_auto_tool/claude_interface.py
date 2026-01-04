@@ -1,4 +1,9 @@
-"""Wrapper for Claude Code CLI interactions."""
+"""Wrapper for Claude Code CLI interactions.
+
+This module provides a Python interface to the Claude Code CLI tool,
+handling subprocess execution, JSON parsing, session management,
+and automatic retry with exponential backoff for transient failures.
+"""
 
 import json
 import logging
@@ -8,6 +13,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from .exceptions import ClaudeNotFoundError, ClaudeResponseError, ClaudeTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +151,12 @@ class ClaudeCodeInterface:
         self._verify_cli()
     
     def _verify_cli(self) -> None:
-        """Verify Claude Code CLI is installed and accessible."""
+        """Verify Claude Code CLI is installed and accessible.
+
+        Raises:
+            ClaudeNotFoundError: If the Claude CLI is not installed or not in PATH.
+            ClaudeResponseError: If the CLI returns an error on version check.
+        """
         try:
             result = subprocess.run(
                 ["claude", "--version"],
@@ -153,12 +165,13 @@ class ClaudeCodeInterface:
                 timeout=10
             )
             if result.returncode != 0:
-                raise RuntimeError(f"Claude CLI error: {result.stderr}")
+                raise ClaudeResponseError(
+                    reason="CLI version check failed",
+                    raw_output=result.stderr
+                )
             logger.info(f"Claude CLI version: {result.stdout.strip()}")
         except FileNotFoundError as err:
-            raise RuntimeError(
-                "Claude Code CLI not found. Install with: npm install -g @anthropic-ai/claude-code"
-            ) from err
+            raise ClaudeNotFoundError() from err
     
     def _build_command(
         self,
@@ -190,11 +203,13 @@ class ClaudeCodeInterface:
     def _execute_single_call(
         self,
         cmd: list[str],
+        prompt_preview: str = "",
     ) -> ClaudeResponse:
         """Execute a single Claude CLI call without retry logic.
 
         Args:
             cmd: The command list to execute.
+            prompt_preview: First 100 chars of prompt for error context.
 
         Returns:
             ClaudeResponse from this single execution attempt.
@@ -221,30 +236,46 @@ class ClaudeCodeInterface:
                         raw_output=output,
                         session_id=self.session_id,
                     )
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as e:
                     # Non-JSON output (shouldn't happen with --output-format json)
+                    logger.warning(f"Failed to parse Claude output as JSON: {e}")
                     return ClaudeResponse(
                         success=result.returncode == 0,
                         result=result.stdout,
+                        error=f"JSON parse error: {e}" if result.returncode != 0 else None,
                     )
             else:
+                error_msg = result.stderr.strip() if result.stderr else "No output from Claude CLI"
                 return ClaudeResponse(
                     success=False,
                     result="",
-                    error=result.stderr or "No output from Claude CLI",
+                    error=error_msg,
                 )
 
         except subprocess.TimeoutExpired:
+            # Create a structured timeout error for logging context
+            timeout_error = ClaudeTimeoutError(self.timeout, prompt_preview)
+            logger.error(str(timeout_error))
             return ClaudeResponse(
                 success=False,
                 result="",
-                error=f"Claude CLI timed out after {self.timeout}s",
+                error=f"Timeout after {self.timeout}s",
+            )
+        except OSError as e:
+            # Handle OS-level errors (permissions, resources, etc.)
+            logger.error(f"OS error executing Claude CLI: {e}")
+            return ClaudeResponse(
+                success=False,
+                result="",
+                error=f"OS error: {e}",
             )
         except Exception as e:
+            # Catch-all for unexpected errors
+            logger.exception(f"Unexpected error executing Claude CLI: {e}")
             return ClaudeResponse(
                 success=False,
                 result="",
-                error=str(e),
+                error=f"Unexpected error: {e}",
             )
 
     def call(
@@ -271,13 +302,16 @@ class ClaudeCodeInterface:
         full_prompt = f"{context}\n\n{prompt}" if context else prompt
         cmd = self._build_command(full_prompt, max_turns, resume)
 
+        # Create prompt preview for error context (used in timeout errors)
+        prompt_preview = prompt[:100]
+
         logger.debug(f"Executing: {' '.join(cmd)}")
-        logger.info(f"Prompt: {prompt[:100]}...")
+        logger.info(f"Prompt: {prompt_preview}...")
 
         last_response: ClaudeResponse | None = None
 
         for attempt in range(self.max_retries + 1):
-            response = self._execute_single_call(cmd)
+            response = self._execute_single_call(cmd, prompt_preview)
 
             # Success - return immediately
             if response.success:
