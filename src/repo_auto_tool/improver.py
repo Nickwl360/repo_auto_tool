@@ -67,9 +67,15 @@ YOUR TASK FOR THIS ITERATION:
 IMPORTANT INSTRUCTIONS:
 - Make real, concrete improvements (edit files, add code, fix issues)
 - Focus on ONE clear improvement per iteration
+- VERIFY your changes work: after editing, run linters/checks if available
+- AUTO-DETECT problems: look for issues in the code you touch and fix them
+- If you create new code, ensure it integrates properly with existing code
+- Check imports, function signatures, and dependencies are correct
 - After making changes, briefly describe what you did
 - If you believe the goal is FULLY COMPLETE, start your response with "GOAL_COMPLETE:"
 - If you encounter a blocker you cannot resolve, start with "BLOCKED:"
+
+BE ROBUST: Assume your changes will be validated. Write clean, correct code.
 
 Now make the improvements:
 """
@@ -145,13 +151,19 @@ Do NOT simply revert - try to fix the problems properly.
 
         Automatically resolves commands to use virtual environment paths
         when a venv is detected in the repository.
+
+        Smart detection: Skips test validator if no test files are found.
         """
         pipeline = ValidationPipeline()
 
         if self.config.run_tests:
-            test_cmd = get_venv_command(self.config.repo_path, self.config.test_command)
-            logger.debug(f"Test command resolved: {test_cmd}")
-            pipeline.add(CommandValidator("tests", test_cmd))
+            # Smart test detection - skip if no test files exist
+            if self._has_test_files():
+                test_cmd = get_venv_command(self.config.repo_path, self.config.test_command)
+                logger.debug(f"Test command resolved: {test_cmd}")
+                pipeline.add(CommandValidator("tests", test_cmd))
+            else:
+                logger.info("No test files found, skipping test validator")
 
         if self.config.run_linter:
             lint_cmd = get_venv_command(self.config.repo_path, self.config.lint_command)
@@ -163,6 +175,33 @@ Do NOT simply revert - try to fix the problems properly.
             pipeline.add(CommandValidator(f"custom_{i}", resolved_cmd))
 
         return pipeline
+
+    def _has_test_files(self) -> bool:
+        """Check if the repository has test files.
+
+        Looks for common test patterns in the src directory (excluding venv).
+
+        Returns:
+            True if test files are found, False otherwise.
+        """
+        skip_dirs = {"venv", ".venv", "env", "node_modules", ".git", "__pycache__"}
+
+        for pattern in ["test_*.py", "*_test.py", "tests.py"]:
+            for path in self.config.repo_path.rglob(pattern):
+                # Skip venv and other non-source directories
+                if not any(part in skip_dirs for part in path.parts):
+                    logger.debug(f"Found test file: {path}")
+                    return True
+
+        # Also check for tests/ directory
+        tests_dir = self.config.repo_path / "tests"
+        if tests_dir.is_dir():
+            for py_file in tests_dir.rglob("*.py"):
+                if py_file.name != "__init__.py":
+                    logger.debug(f"Found test file in tests/: {py_file}")
+                    return True
+
+        return False
     
     def analyze(self) -> str:
         """Analyze the current state of the repo vs the goal."""

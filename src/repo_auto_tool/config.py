@@ -108,7 +108,7 @@ class ImproverConfig:
     model: str | None = None  # Use default if None
 
     # Validation settings
-    run_tests: bool = False  # Disabled by default - enable with --test-cmd
+    run_tests: bool = True  # Smart detection skips if no test files found
     test_command: str = "pytest"
     run_linter: bool = True
     lint_command: str = "ruff check ."
