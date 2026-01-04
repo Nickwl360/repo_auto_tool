@@ -5,9 +5,18 @@ import logging
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
+
+from .exceptions import StateCorruptedError, StateLoadError, StateSaveError
 
 logger = logging.getLogger(__name__)
+
+# Required fields for state validation
+_REQUIRED_STATE_FIELDS = {"goal", "repo_path", "status"}
+_REQUIRED_ITERATION_FIELDS = {
+    "iteration", "timestamp", "prompt", "result", "success", "validation_passed"
+}
+_VALID_STATUSES = {"running", "completed", "failed", "paused"}
 
 
 @dataclass
@@ -26,8 +35,48 @@ class IterationRecord:
         return asdict(self)
     
     @classmethod
-    def from_dict(cls, data: dict) -> "IterationRecord":
-        return cls(**data)
+    def from_dict(cls, data: dict[str, Any]) -> "IterationRecord":
+        """Create an IterationRecord from a dictionary.
+
+        Args:
+            data: Dictionary with iteration data.
+
+        Returns:
+            IterationRecord instance.
+
+        Raises:
+            StateCorruptedError: If required fields are missing or have invalid types.
+        """
+        # Validate required fields
+        missing = _REQUIRED_ITERATION_FIELDS - set(data.keys())
+        if missing:
+            raise StateCorruptedError(
+                path="<unknown>",
+                reason=f"Missing required iteration fields: {missing}"
+            )
+
+        # Validate field types
+        if not isinstance(data.get("iteration"), int):
+            raise StateCorruptedError(
+                path="<unknown>",
+                reason=f"'iteration' must be an integer, got {type(data.get('iteration'))}"
+            )
+        if not isinstance(data.get("success"), bool):
+            raise StateCorruptedError(
+                path="<unknown>",
+                reason=f"'success' must be a boolean, got {type(data.get('success'))}"
+            )
+        if not isinstance(data.get("validation_passed"), bool):
+            val_type = type(data.get("validation_passed"))
+            raise StateCorruptedError(
+                path="<unknown>",
+                reason=f"'validation_passed' must be a boolean, got {val_type}"
+            )
+
+        # Filter to only expected fields to prevent unexpected kwargs
+        expected_fields = _REQUIRED_ITERATION_FIELDS | {"git_commit", "error"}
+        filtered_data = {k: v for k, v in data.items() if k in expected_fields}
+        return cls(**filtered_data)
 
 
 @dataclass  
@@ -107,7 +156,14 @@ class ImprovementState:
         self.summary = f"Failed: {reason}"
     
     def save(self, path: Path) -> None:
-        """Save state to JSON file."""
+        """Save state to JSON file.
+
+        Args:
+            path: Path to save the state file.
+
+        Raises:
+            StateSaveError: If the file cannot be written.
+        """
         data = {
             "goal": self.goal,
             "repo_path": self.repo_path,
@@ -120,21 +176,104 @@ class ImprovementState:
             "completed_at": self.completed_at,
             "summary": self.summary,
         }
-        path.write_text(json.dumps(data, indent=2))
-        logger.debug(f"State saved to {path}")
+
+        try:
+            # Ensure parent directory exists
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(data, indent=2))
+            logger.debug(f"State saved to {path}")
+        except PermissionError as e:
+            raise StateSaveError(path, f"Permission denied: {e}") from e
+        except OSError as e:
+            raise StateSaveError(path, f"OS error: {e}") from e
     
     @classmethod
     def load(cls, path: Path) -> "ImprovementState":
-        """Load state from JSON file."""
-        data = json.loads(path.read_text())
-        iterations = [IterationRecord.from_dict(it) for it in data.pop("iterations", [])]
-        state = cls(**data)
+        """Load state from JSON file.
+
+        Args:
+            path: Path to the state file.
+
+        Returns:
+            ImprovementState instance.
+
+        Raises:
+            StateLoadError: If the file cannot be read.
+            StateCorruptedError: If the file contains invalid data.
+        """
+        # Try to read the file
+        try:
+            content = path.read_text()
+        except FileNotFoundError as e:
+            raise StateLoadError(path, "File not found") from e
+        except PermissionError as e:
+            raise StateLoadError(path, f"Permission denied: {e}") from e
+        except OSError as e:
+            raise StateLoadError(path, f"OS error: {e}") from e
+
+        # Try to parse JSON
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError as e:
+            raise StateCorruptedError(path, f"Invalid JSON: {e}") from e
+
+        # Validate it's a dictionary
+        if not isinstance(data, dict):
+            raise StateCorruptedError(path, f"Expected object, got {type(data).__name__}")
+
+        # Validate required fields
+        missing = _REQUIRED_STATE_FIELDS - set(data.keys())
+        if missing:
+            raise StateCorruptedError(path, f"Missing required fields: {missing}")
+
+        # Validate status value
+        status = data.get("status")
+        if status not in _VALID_STATUSES:
+            raise StateCorruptedError(
+                path, f"Invalid status '{status}', must be one of {_VALID_STATUSES}"
+            )
+
+        # Parse iterations with validation
+        iterations_data = data.pop("iterations", [])
+        if not isinstance(iterations_data, list):
+            iter_type = type(iterations_data).__name__
+            raise StateCorruptedError(
+                path, f"'iterations' must be a list, got {iter_type}"
+            )
+
+        try:
+            iterations = [IterationRecord.from_dict(it) for it in iterations_data]
+        except StateCorruptedError as e:
+            # Re-raise with correct path
+            raise StateCorruptedError(path, e.reason) from e
+
+        # Filter to expected fields
+        expected_fields = {
+            "goal", "repo_path", "status", "current_iteration", "total_iterations",
+            "consecutive_failures", "started_at", "completed_at", "summary"
+        }
+        filtered_data = {k: v for k, v in data.items() if k in expected_fields}
+
+        state = cls(**filtered_data)
         state.iterations = iterations
         return state
     
     @classmethod
     def load_or_create(cls, path: Path, goal: str, repo_path: str) -> "ImprovementState":
-        """Load existing state or create new one."""
+        """Load existing state or create new one.
+
+        Args:
+            path: Path to the state file.
+            goal: The improvement goal (used for new state).
+            repo_path: Path to the repository (used for new state).
+
+        Returns:
+            ImprovementState instance (loaded or newly created).
+
+        Raises:
+            StateLoadError: If file exists but cannot be read.
+            StateCorruptedError: If file exists but contains invalid data.
+        """
         if path.exists():
             logger.info(f"Resuming from existing state: {path}")
             return cls.load(path)
