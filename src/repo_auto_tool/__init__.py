@@ -48,6 +48,14 @@ from .exceptions import (
 )
 from .git_helper import GitHelper, GitStatus
 from .improver import RepoImprover
+from .interrupt_handler import (
+    InterruptAction,
+    InterruptContext,
+    InterruptHandler,
+    InterruptResult,
+    InterruptState,
+    create_interrupt_handler,
+)
 from .logging import (
     VALID_LOG_LEVELS,
     ConsoleFormatter,
@@ -124,6 +132,13 @@ __all__ = [
     # Git utilities
     "GitHelper",
     "GitStatus",
+    # Interrupt handling
+    "InterruptAction",
+    "InterruptContext",
+    "InterruptHandler",
+    "InterruptResult",
+    "InterruptState",
+    "create_interrupt_handler",
     # Utilities
     "find_venv_path",
     "get_venv_command",

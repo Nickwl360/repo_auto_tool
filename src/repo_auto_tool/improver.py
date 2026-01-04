@@ -1,5 +1,7 @@
 """Main repo improver orchestrator."""
 
+from __future__ import annotations
+
 import logging
 
 from .claude_interface import ClaudeCodeInterface
@@ -12,6 +14,12 @@ from .convergence import (
 )
 from .exceptions import CostLimitExceededError, GitNotInitializedError
 from .git_helper import GitHelper
+from .interrupt_handler import (
+    InterruptAction,
+    InterruptHandler,
+    InterruptResult,
+    create_interrupt_handler,
+)
 from .model_selector import ModelSelector
 from .prompt_adapter import PromptAdapter
 from .safety import SafetyManager
@@ -150,6 +158,11 @@ Do NOT simply revert - try to fix the problems properly.
         # Load cross-session history for learning from past sessions
         self.session_history = SessionHistory.load(config.repo_path)
         self._apply_historical_learnings()
+
+        # Initialize interactive interrupt handler
+        # Allows users to pause, adjust goals, provide feedback during execution
+        self.interrupt_handler: InterruptHandler | None = None
+        self._user_feedback: list = []  # Accumulated user feedback from interrupts
 
         # Setup logging
         self._setup_logging()
@@ -301,6 +314,15 @@ Do NOT simply revert - try to fix the problems properly.
         task = self._determine_next_task()
         context = self.state.get_recent_context()
 
+        # Include any user feedback from interrupt menu
+        if self._user_feedback:
+            feedback_text = "\n\nUSER FEEDBACK (from interactive menu):\n"
+            for i, fb in enumerate(self._user_feedback, 1):
+                feedback_text += f"{i}. {fb}\n"
+            context = context + feedback_text
+            # Clear feedback after including it
+            self._user_feedback = []
+
         prompt = self.IMPROVE_PROMPT.format(
             goal=self.config.goal,
             context=context,
@@ -440,7 +462,7 @@ Do NOT simply revert - try to fix the problems properly.
     def run(self) -> ImprovementState:
         """
         Run the full improvement loop.
-        
+
         Returns the final state with results.
         """
         logger.info("Starting repo improvement")
@@ -449,7 +471,7 @@ Do NOT simply revert - try to fix the problems properly.
         logger.info(f"  Max iterations: {self.config.max_iterations}")
         if self.config.max_cost is not None:
             logger.info(f"  Cost budget: ${self.config.max_cost:.2f}")
-        
+
         # Setup git branch
         if self.git:
             try:
@@ -458,9 +480,33 @@ Do NOT simply revert - try to fix the problems properly.
                 logger.warning("Not a git repository, disabling git operations")
                 self.git = None
                 self.change_tracker = None
-        
+
+        # Initialize interactive interrupt handler for Ctrl+C menu
+        try:
+            self.interrupt_handler = create_interrupt_handler(
+                on_interrupt=self._on_interrupt_callback,
+                enable_signal_handler=True,
+            )
+            logger.info("  Press Ctrl+C anytime to pause and access interactive menu")
+        except Exception as e:
+            logger.warning(f"Could not initialize interrupt handler: {e}")
+            self.interrupt_handler = None
+
         try:
             while self.state.current_iteration < self.config.max_iterations:
+                # Check for interactive interrupt (Ctrl+C was pressed)
+                interrupt_result = self._check_interrupt()
+                if interrupt_result:
+                    if interrupt_result.action == InterruptAction.ABORT:
+                        logger.info("Session aborted by user")
+                        self.state.status = "paused"
+                        self.state.summary = "Aborted by user"
+                        break
+                    elif interrupt_result.action == InterruptAction.SKIP_STEP:
+                        logger.info("Skipping current step by user request")
+                        # Continue to next iteration without running current step
+                        continue
+
                 # Check for too many consecutive failures
                 if self.state.consecutive_failures >= self.config.max_consecutive_failures:
                     failures = self.state.consecutive_failures
@@ -511,16 +557,24 @@ Do NOT simply revert - try to fix the problems properly.
                 # Reached max iterations
                 logger.warning(f"Reached max iterations ({self.config.max_iterations})")
                 self.state.status = "paused"
-            
+
         except KeyboardInterrupt:
+            # Fallback if interrupt handler didn't catch it
             logger.info("\nInterrupted by user")
             self.state.status = "paused"
-        
+
         finally:
             self.state.save(self.config.state_file)
 
             # Save session learnings to history for future sessions
             self._save_session_history()
+
+            # Cleanup interrupt handler
+            if self.interrupt_handler:
+                try:
+                    self.interrupt_handler.cleanup()
+                except Exception as e:
+                    logger.warning(f"Error cleaning up interrupt handler: {e}")
 
             if self.git and self.state.status != "completed":
                 # Optionally restore original branch on non-completion
@@ -528,8 +582,46 @@ Do NOT simply revert - try to fix the problems properly.
 
         # Final summary
         self._print_summary()
-        
+
         return self.state
+
+    def _check_interrupt(self) -> InterruptResult | None:
+        """
+        Check if user has requested an interrupt and handle it.
+
+        Returns:
+            InterruptResult if user took action, None otherwise.
+        """
+        if not self.interrupt_handler:
+            return None
+
+        try:
+            result = self.interrupt_handler.check_and_handle(current_goal=self.config.goal)
+            if result:
+                # Handle goal adjustment
+                if result.action == InterruptAction.ADJUST_GOAL and result.new_goal:
+                    logger.info(f"Goal adjusted to: {result.new_goal[:100]}...")
+                    self.config.goal = result.new_goal
+                    self.state.goal = result.new_goal
+
+                # Handle feedback - add to accumulated feedback
+                if result.action == InterruptAction.PROVIDE_FEEDBACK and result.feedback:
+                    self._user_feedback.append(result.feedback)
+                    logger.info(f"User feedback recorded ({len(self._user_feedback)} total)")
+
+            return result
+        except Exception as e:
+            logger.warning(f"Error checking interrupt: {e}")
+            return None
+
+    def _on_interrupt_callback(self, result: InterruptResult) -> None:
+        """
+        Callback when user takes an interrupt action.
+
+        Args:
+            result: The result of the interrupt menu interaction.
+        """
+        logger.debug(f"Interrupt action taken: {result.action.value}")
     
     def _handle_checkpoint(self, reason: str) -> None:
         """Handle a checkpoint during improvement loop.
