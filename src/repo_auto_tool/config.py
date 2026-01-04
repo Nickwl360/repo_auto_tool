@@ -11,38 +11,52 @@ from .logging import VALID_LOG_LEVELS
 @dataclass
 class ImproverConfig:
     """Configuration for a repo improvement session."""
-    
+
     # Target repository
     repo_path: Path
-    
+
     # The goal to achieve (natural language description)
     goal: str
-    
+
     # Improvement loop settings
     max_iterations: int = 20
     max_consecutive_failures: int = 3
-    
+
     # Claude Code settings
     allowed_tools: list[str] = field(default_factory=lambda: [
         "Bash(*)", "Read(*)", "Edit(*)", "Write(*)", "Glob(*)", "Grep(*)"
     ])
     model: str | None = None  # Use default if None
-    
+
     # Validation settings
     run_tests: bool = True
     test_command: str = "pytest"
     run_linter: bool = True
     lint_command: str = "ruff check ."
     custom_validators: list[str] = field(default_factory=list)  # Shell commands
-    
+
     # Git safety
     use_git: bool = True
     commit_each_iteration: bool = True
     branch_name: str = "repo-improver/auto"
-    
+
     # State persistence
     state_file: Path | None = None  # Auto-set if None
-    
+    state_dir: Path | None = None  # Directory for state files
+
+    # Safety settings
+    redact_secrets: bool = True
+    detect_dangerous_commands: bool = True
+
+    # Goal type for different improvement strategies
+    goal_type: Literal["open-ended", "bounded", "exploratory"] = "open-ended"
+
+    # Convergence detection settings
+    convergence_threshold: float = 0.1
+    plateau_window: int = 3
+    checkpoint_interval: int = 5
+    early_stop_enabled: bool = True
+
     # Output settings
     verbose: bool = True
     log_file: Path | None = None

@@ -220,6 +220,35 @@ Examples:
         help="Path to log file (default: .repo-improver.log in repo)",
     )
 
+    # State and convergence settings
+    parser.add_argument(
+        "--state-dir",
+        type=Path,
+        default=None,
+        help="Directory for state files (default: repo root)",
+    )
+
+    parser.add_argument(
+        "--goal-type",
+        type=str,
+        choices=["open-ended", "bounded", "exploratory"],
+        default="open-ended",
+        help="Goal type: open-ended, bounded, or exploratory (default: open-ended)",
+    )
+
+    parser.add_argument(
+        "--checkpoint-interval",
+        type=int,
+        default=5,
+        help="Create checkpoint every N iterations (default: 5, 0 to disable)",
+    )
+
+    parser.add_argument(
+        "--no-early-stop",
+        action="store_true",
+        help="Disable early stopping when convergence detected",
+    )
+
     args = parser.parse_args()
     
     # Validate arguments
@@ -255,6 +284,10 @@ Examples:
         lint_command=args.lint_cmd,
         use_git=not args.no_git,
         branch_name=args.branch,
+        state_dir=args.state_dir,
+        goal_type=args.goal_type,
+        checkpoint_interval=args.checkpoint_interval,
+        early_stop_enabled=not args.no_early_stop,
         verbose=not args.quiet,
         log_level=args.log_level,
         log_file=args.log_file,
