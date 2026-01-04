@@ -13,6 +13,7 @@ from .agents import (
 )
 from .claude_interface import ClaudeCodeInterface, ClaudeResponse, TokenUsage
 from .config import ImproverConfig, find_venv_path, get_venv_command
+from .context_manager import ContextManager, ContextSummary
 from .convergence import (
     ChangeMetrics,
     ChangeTracker,
@@ -94,6 +95,9 @@ __all__ = [
     "ImprovementState",
     "IterationRecord",
     "StatusType",
+    # Context management
+    "ContextManager",
+    "ContextSummary",
     # Claude interface
     "ClaudeCodeInterface",
     "ClaudeResponse",

@@ -227,20 +227,38 @@ class ImprovementState:
             self.consecutive_failures += 1
     
     def get_recent_context(self, n: int = 3) -> str:
-        """Get context from recent iterations for Claude."""
+        """Get context from recent iterations for Claude.
+
+        For simple cases with few iterations, returns basic context.
+        For longer sessions, uses smart summarization.
+
+        Args:
+            n: Number of recent iterations to include (for basic mode).
+
+        Returns:
+            Context string for inclusion in prompts.
+        """
         if not self.iterations:
             return "No previous iterations."
-        
-        recent = self.iterations[-n:]
-        context_parts = [f"Goal: {self.goal}", "", "Recent progress:"]
-        
-        for record in recent:
-            status = "[OK]" if record.success and record.validation_passed else "[FAIL]"
-            context_parts.append(
-                f"  [{status}] Iteration {record.iteration}: {record.result[:200]}..."
-            )
-        
-        return "\n".join(context_parts)
+
+        # For short sessions, use basic context
+        if len(self.iterations) <= 5:
+            recent = self.iterations[-n:]
+            context_parts = [f"Goal: {self.goal}", "", "Recent progress:"]
+
+            for record in recent:
+                status = "[OK]" if record.success and record.validation_passed else "[FAIL]"
+                context_parts.append(
+                    f"  [{status}] Iteration {record.iteration}: {record.result[:200]}..."
+                )
+
+            return "\n".join(context_parts)
+
+        # For longer sessions, use smart context summarization
+        from .context_manager import ContextManager
+
+        manager = ContextManager()
+        return manager.get_context(self.goal, self.iterations)
     
     def mark_complete(self, summary: str) -> None:
         """Mark the improvement session as complete."""
