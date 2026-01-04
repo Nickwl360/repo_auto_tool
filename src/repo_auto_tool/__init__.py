@@ -11,10 +11,12 @@ from .agents import (
     ReviewerAgent,
     create_agent,
 )
+from .claude_interface import ClaudeCodeInterface, ClaudeResponse
 from .config import ImproverConfig, find_venv_path, get_venv_command
 from .convergence import (
     ChangeMetrics,
     ChangeTracker,
+    ConvergenceAction,
     ConvergenceConfig,
     ConvergenceDetector,
     ConvergenceState,
@@ -42,7 +44,14 @@ from .exceptions import (
 )
 from .git_helper import GitHelper, GitStatus
 from .improver import RepoImprover
-from .logging import JSONFormatter, setup_logging
+from .logging import (
+    VALID_LOG_LEVELS,
+    ConsoleFormatter,
+    JSONFormatter,
+    LogLevel,
+    get_logger,
+    setup_logging,
+)
 from .safety import (
     DangerousCommand,
     DangerousCommandDetector,
@@ -69,6 +78,9 @@ __all__ = [
     "ImproverConfig",
     "ImprovementState",
     "StatusType",
+    # Claude interface
+    "ClaudeCodeInterface",
+    "ClaudeResponse",
     # Git utilities
     "GitHelper",
     "GitStatus",
@@ -94,11 +106,16 @@ __all__ = [
     "ConvergenceDetector",
     "ConvergenceConfig",
     "ConvergenceState",
+    "ConvergenceAction",
     "ChangeTracker",
     "ChangeMetrics",
     # Logging
     "setup_logging",
+    "get_logger",
     "JSONFormatter",
+    "ConsoleFormatter",
+    "LogLevel",
+    "VALID_LOG_LEVELS",
     # Base exception
     "RepoAutoToolError",
     # Configuration errors
