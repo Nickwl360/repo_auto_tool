@@ -97,6 +97,15 @@ from .model_selector import (
     ModelSelector,
     TaskComplexity,
 )
+from .pr_generator import (
+    CommitInfo,
+    GitPlatform,
+    PRContent,
+    PRGenerator,
+    PRGeneratorError,
+    PRResult,
+    create_pr_from_repo,
+)
 from .prompt_adapter import (
     AdaptiveGuidance,
     FailureRecord,
@@ -337,4 +346,12 @@ __all__ = [
     "create_claude_circuit_breaker",
     "create_git_circuit_breaker",
     "create_file_io_circuit_breaker",
+    # PR generation
+    "PRGenerator",
+    "PRContent",
+    "PRResult",
+    "PRGeneratorError",
+    "GitPlatform",
+    "CommitInfo",
+    "create_pr_from_repo",
 ]

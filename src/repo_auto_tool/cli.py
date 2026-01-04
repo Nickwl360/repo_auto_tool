@@ -17,6 +17,7 @@ from .foreign_repo import (
 from .goal_analyzer import GoalAnalyzer, GoalComplexity, GoalRisk
 from .improver import RepoImprover
 from .logging import setup_logging
+from .pr_generator import PRResult, create_pr_from_repo
 from .prompt_parser import ParsedPrompt, PromptParser
 from .tui import TUI, TUIConfig, create_tui, setup_tui_logging
 
@@ -417,6 +418,42 @@ Examples:
         "--analyze-goal",
         action="store_true",
         help="Only analyze the goal (show complexity, risk, suggestions) without running",
+    )
+
+    # PR generation options
+    parser.add_argument(
+        "--create-pr",
+        action="store_true",
+        help="Create a pull request after improvements are complete. "
+             "Requires gh (GitHub) or glab (GitLab) CLI to be installed and authenticated.",
+    )
+
+    parser.add_argument(
+        "--pr-preview",
+        action="store_true",
+        help="Preview the PR that would be created without actually creating it.",
+    )
+
+    parser.add_argument(
+        "--pr-draft",
+        action="store_true",
+        help="Create the PR as a draft (not ready for review).",
+    )
+
+    parser.add_argument(
+        "--pr-base",
+        type=str,
+        default=None,
+        metavar="BRANCH",
+        help="Base branch for the PR (default: main or detected default branch).",
+    )
+
+    parser.add_argument(
+        "--pr-labels",
+        type=str,
+        default=None,
+        metavar="LABELS",
+        help="Comma-separated labels to add to the PR (e.g., 'bug,enhancement').",
     )
 
     args = parser.parse_args()
@@ -877,6 +914,73 @@ Examples:
     # Show detailed metrics if requested
     if args.show_metrics:
         improver.print_metrics_report()
+
+    # Handle PR creation/preview after successful run
+    if result.status == "completed" and (args.create_pr or args.pr_preview):
+        try:
+            # Determine base branch
+            pr_base = args.pr_base
+            if pr_base is None:
+                if cloned_repo:
+                    pr_base = cloned_repo.default_branch
+                else:
+                    pr_base = "main"
+
+            # Parse labels
+            pr_labels = None
+            if args.pr_labels:
+                pr_labels = [
+                    label.strip() for label in args.pr_labels.split(",") if label.strip()
+                ]
+
+            if args.pr_preview:
+                # Show preview without creating
+                if not args.quiet:
+                    print("\n" + "=" * 60)
+                    print("PULL REQUEST PREVIEW")
+                    print("=" * 60 + "\n")
+
+                preview = create_pr_from_repo(
+                    repo_path=repo_path,
+                    base_branch=pr_base,
+                    goal=goal,
+                    labels=pr_labels,
+                    preview_only=True,
+                )
+                print(preview)
+
+            elif args.create_pr:
+                # Create the PR
+                if not args.quiet:
+                    print("\nCreating pull request...")
+
+                pr_result: PRResult = create_pr_from_repo(
+                    repo_path=repo_path,
+                    base_branch=pr_base,
+                    goal=goal,
+                    draft=args.pr_draft,
+                    labels=pr_labels,
+                    push_first=True,
+                    preview_only=False,
+                )
+
+                if pr_result.success:
+                    if args.json:
+                        import json as json_module
+                        print(json_module.dumps(pr_result.to_dict(), indent=2))
+                    else:
+                        print("\nPR created successfully!")
+                        if pr_result.pr_url:
+                            print(f"  URL: {pr_result.pr_url}")
+                        if pr_result.pr_number:
+                            print(f"  Number: #{pr_result.pr_number}")
+                else:
+                    print(f"\nFailed to create PR: {pr_result.error}", file=sys.stderr)
+                    # Don't change exit code - improvements were successful
+
+        except Exception as e:
+            print(f"\nError during PR creation: {e}", file=sys.stderr)
+            # Don't change exit code - improvements were successful
 
     # Exit code based on result
     if result.status == "completed":
