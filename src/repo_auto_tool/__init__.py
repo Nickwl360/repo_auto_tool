@@ -11,6 +11,22 @@ from .agents import (
     ReviewerAgent,
     create_agent,
 )
+from .circuit_breaker import (
+    CircuitBreaker,
+    CircuitBreakerConfig,
+    CircuitBreakerError,
+    CircuitBreakerRegistry,
+    CircuitOpenError,
+    CircuitState,
+    CircuitStats,
+    create_claude_circuit_breaker,
+    create_file_io_circuit_breaker,
+    create_git_circuit_breaker,
+    get_circuit_breaker,
+)
+from .circuit_breaker import (
+    registry as circuit_registry,
+)
 from .claude_interface import ClaudeCodeInterface, ClaudeResponse, TokenUsage
 from .config import ImproverConfig, find_venv_path, get_venv_command
 from .context_manager import ContextManager, ContextSummary
@@ -291,4 +307,17 @@ __all__ = [
     "create_tui",
     "create_plain_text_tui",
     "setup_tui_logging",
+    # Circuit breaker
+    "CircuitBreaker",
+    "CircuitBreakerConfig",
+    "CircuitBreakerError",
+    "CircuitBreakerRegistry",
+    "CircuitOpenError",
+    "CircuitState",
+    "CircuitStats",
+    "circuit_registry",
+    "get_circuit_breaker",
+    "create_claude_circuit_breaker",
+    "create_git_circuit_breaker",
+    "create_file_io_circuit_breaker",
 ]
