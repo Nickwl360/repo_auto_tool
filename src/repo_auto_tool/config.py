@@ -108,7 +108,7 @@ class ImproverConfig:
     model: str | None = None  # Use default if None
 
     # Validation settings
-    run_tests: bool = True
+    run_tests: bool = False  # Disabled by default - enable with --test-cmd
     test_command: str = "pytest"
     run_linter: bool = True
     lint_command: str = "ruff check ."

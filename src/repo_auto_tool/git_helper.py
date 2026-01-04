@@ -135,16 +135,36 @@ class GitHelper:
     def rollback(self) -> bool:
         """
         Rollback uncommitted changes.
-        
-        Returns True if rollback was performed.
+
+        Restores tracked files with checkout and removes untracked files with clean.
+        Handles failures gracefully (e.g., locked files on Windows).
+
+        Returns True if rollback was performed (even if partial).
         """
         status = self.get_status()
         if not status.is_repo or not status.has_changes:
             return False
-        
+
         logger.warning("Rolling back uncommitted changes")
-        self._run("checkout", ".")
-        self._run("clean", "-fd")
+
+        # Restore tracked files
+        try:
+            self._run("checkout", ".")
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"Partial rollback - checkout failed: {e.stderr}")
+
+        # Remove untracked files (may fail on Windows with locked files)
+        try:
+            self._run("clean", "-fd")
+        except subprocess.CalledProcessError as e:
+            # Log but don't fail - some files may be locked
+            logger.warning(f"Partial rollback - clean failed: {e.stderr}")
+            # Try a less aggressive clean
+            try:
+                self._run("clean", "-f", check=False)
+            except subprocess.CalledProcessError:
+                pass
+
         return True
     
     def restore_original_branch(self) -> None:
