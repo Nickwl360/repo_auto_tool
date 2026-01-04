@@ -136,6 +136,13 @@ from .session_metrics import (
     SuccessMetrics,
     TimeMetrics,
 )
+from .session_report import (
+    ChangeCategory,
+    DiffSummary,
+    IterationSummary,
+    ProgressEstimate,
+    SessionReporter,
+)
 from .smart_defaults import (
     DetectedTools,
     ProjectProfile,
@@ -262,6 +269,12 @@ __all__ = [
     "EfficiencyMetrics",
     "TimeMetrics",
     "FailureAnalysis",
+    # Session reporting
+    "SessionReporter",
+    "ProgressEstimate",
+    "DiffSummary",
+    "IterationSummary",
+    "ChangeCategory",
     # Logging
     "setup_logging",
     "get_logger",

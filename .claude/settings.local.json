@@ -4,7 +4,9 @@
       "Bash(./venv/Scripts/repo-auto-tool:*)",
       "Bash(./venv/Scripts/python:*)",
       "Bash(./venv/Scripts/ruff check src/)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git stash:*)",
+      "Bash(git checkout:*)"
     ]
   }
 }

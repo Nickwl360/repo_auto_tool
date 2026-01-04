@@ -2,6 +2,7 @@
 
 import argparse
 import atexit
+import logging
 import sys
 from pathlib import Path
 
@@ -20,6 +21,8 @@ from .logging import setup_logging
 from .pr_generator import PRResult, create_pr_from_repo
 from .prompt_parser import ParsedPrompt, PromptParser
 from .tui import TUI, TUIConfig, create_tui, setup_tui_logging
+
+logger = logging.getLogger(__name__)
 
 # Global manager for cleanup on exit
 _foreign_repo_manager: ForeignRepoManager | None = None
@@ -706,6 +709,13 @@ Examples:
         console_output=config.verbose,
         json_format=config.output_format == "json",
     )
+
+    # Log startup info
+    logger.info(f"Starting repo-auto-tool in {execution_mode} mode")
+    logger.info(f"Repository: {repo_path}")
+    logger.info(f"Log level: {config.log_level}, log file: {config.log_file}")
+    if goal:
+        logger.info(f"Goal: {goal[:100]}{'...' if len(goal) > 100 else ''}")
 
     # Perform goal analysis (unless skipped or in certain modes)
     skip_analysis = (

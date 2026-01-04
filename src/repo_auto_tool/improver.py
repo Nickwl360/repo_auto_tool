@@ -164,9 +164,6 @@ Do NOT simply revert - try to fix the problems properly.
         self.interrupt_handler: InterruptHandler | None = None
         self._user_feedback: list = []  # Accumulated user feedback from interrupts
 
-        # Setup logging
-        self._setup_logging()
-
     def _apply_historical_learnings(self) -> None:
         """Apply learnings from past sessions to the prompt adapter.
 
@@ -190,19 +187,6 @@ Do NOT simply revert - try to fix the problems properly.
                 f"{stats['total_fixes_recorded']} recorded fixes"
             )
 
-    def _setup_logging(self) -> None:
-        """Configure logging."""
-        level = logging.DEBUG if self.config.verbose else logging.INFO
-        logging.basicConfig(
-            level=level,
-            format="%(asctime)s [%(levelname)s] %(message)s",
-            handlers=[
-                logging.StreamHandler(),
-                logging.FileHandler(self.config.log_file)
-                if self.config.log_file else logging.NullHandler(),
-            ]
-        )
-    
     def _setup_validators(self) -> ValidationPipeline:
         """Setup validation pipeline from config.
 
