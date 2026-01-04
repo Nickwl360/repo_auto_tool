@@ -11,7 +11,7 @@ from .agents import (
     ReviewerAgent,
     create_agent,
 )
-from .config import ImproverConfig
+from .config import ImproverConfig, find_venv_path, get_venv_command
 from .convergence import (
     ChangeMetrics,
     ChangeTracker,
@@ -49,7 +49,7 @@ from .safety import (
     SecretMatch,
     SecretsRedactor,
 )
-from .state import ImprovementState
+from .state import ImprovementState, truncate_text
 
 __version__ = "0.1.0"
 __all__ = [
@@ -57,6 +57,10 @@ __all__ = [
     "RepoImprover",
     "ImproverConfig",
     "ImprovementState",
+    # Utilities
+    "find_venv_path",
+    "get_venv_command",
+    "truncate_text",
     # Agents
     "Agent",
     "AgentMode",

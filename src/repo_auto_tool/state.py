@@ -16,7 +16,28 @@ _REQUIRED_STATE_FIELDS = {"goal", "repo_path", "status"}
 _REQUIRED_ITERATION_FIELDS = {
     "iteration", "timestamp", "prompt", "result", "success", "validation_passed"
 }
-_VALID_STATUSES = {"running", "completed", "failed", "paused"}
+_VALID_STATUSES = {"running", "completed", "failed", "paused", "converged"}
+
+# Context efficiency settings
+MAX_RESULT_LENGTH = 2000  # Max chars to store per iteration result
+MAX_ERROR_LENGTH = 1000   # Max chars to store per error
+MAX_STORED_ITERATIONS = 50  # Keep only recent iterations in state file
+
+
+def truncate_text(text: str, max_length: int, suffix: str = "...[truncated]") -> str:
+    """Truncate text to max_length, adding suffix if truncated.
+
+    Args:
+        text: The text to truncate.
+        max_length: Maximum length including suffix.
+        suffix: String to append when truncated.
+
+    Returns:
+        Original text if short enough, otherwise truncated with suffix.
+    """
+    if not text or len(text) <= max_length:
+        return text
+    return text[:max_length - len(suffix)] + suffix
 
 
 @dataclass
@@ -106,22 +127,33 @@ class ImprovementState:
         git_commit: str | None = None,
         error: str | None = None,
     ) -> None:
-        """Record the results of an iteration."""
+        """Record the results of an iteration.
+
+        Automatically truncates long results and errors to prevent
+        unbounded state file growth and reduce context overhead.
+        """
         self.current_iteration += 1
         self.total_iterations += 1
-        
+
+        # Truncate long outputs for efficiency
+        truncated_result = truncate_text(result, MAX_RESULT_LENGTH)
+        truncated_error = truncate_text(error, MAX_ERROR_LENGTH) if error else None
+
+        if len(result) > MAX_RESULT_LENGTH:
+            logger.debug(f"Truncated result from {len(result)} to {MAX_RESULT_LENGTH} chars")
+
         record = IterationRecord(
             iteration=self.current_iteration,
             timestamp=datetime.now().isoformat(),
             prompt=prompt,
-            result=result,
+            result=truncated_result,
             success=success,
             validation_passed=validation_passed,
             git_commit=git_commit,
-            error=error,
+            error=truncated_error,
         )
         self.iterations.append(record)
-        
+
         if success and validation_passed:
             self.consecutive_failures = 0
         else:
@@ -158,12 +190,21 @@ class ImprovementState:
     def save(self, path: Path) -> None:
         """Save state to JSON file.
 
+        Stores only the most recent iterations (up to MAX_STORED_ITERATIONS)
+        to prevent unbounded state file growth while preserving total count.
+
         Args:
             path: Path to save the state file.
 
         Raises:
             StateSaveError: If the file cannot be written.
         """
+        # Keep only recent iterations for storage efficiency
+        stored_iterations = self.iterations[-MAX_STORED_ITERATIONS:]
+        if len(self.iterations) > MAX_STORED_ITERATIONS:
+            trimmed = len(self.iterations) - MAX_STORED_ITERATIONS
+            logger.debug(f"Trimming {trimmed} old iterations from state file")
+
         data = {
             "goal": self.goal,
             "repo_path": self.repo_path,
@@ -171,7 +212,7 @@ class ImprovementState:
             "current_iteration": self.current_iteration,
             "total_iterations": self.total_iterations,
             "consecutive_failures": self.consecutive_failures,
-            "iterations": [it.to_dict() for it in self.iterations],
+            "iterations": [it.to_dict() for it in stored_iterations],
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "summary": self.summary,

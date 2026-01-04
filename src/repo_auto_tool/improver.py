@@ -3,7 +3,7 @@
 import logging
 
 from .claude_interface import ClaudeCodeInterface
-from .config import ImproverConfig
+from .config import ImproverConfig, get_venv_command
 from .convergence import (
     ChangeTracker,
     ConvergenceConfig,
@@ -141,18 +141,27 @@ Do NOT simply revert - try to fix the problems properly.
         )
     
     def _setup_validators(self) -> ValidationPipeline:
-        """Setup validation pipeline from config."""
+        """Setup validation pipeline from config.
+
+        Automatically resolves commands to use virtual environment paths
+        when a venv is detected in the repository.
+        """
         pipeline = ValidationPipeline()
-        
+
         if self.config.run_tests:
-            pipeline.add(CommandValidator("tests", self.config.test_command))
-        
+            test_cmd = get_venv_command(self.config.repo_path, self.config.test_command)
+            logger.debug(f"Test command resolved: {test_cmd}")
+            pipeline.add(CommandValidator("tests", test_cmd))
+
         if self.config.run_linter:
-            pipeline.add(CommandValidator("linter", self.config.lint_command))
-        
+            lint_cmd = get_venv_command(self.config.repo_path, self.config.lint_command)
+            logger.debug(f"Lint command resolved: {lint_cmd}")
+            pipeline.add(CommandValidator("linter", lint_cmd))
+
         for i, cmd in enumerate(self.config.custom_validators):
-            pipeline.add(CommandValidator(f"custom_{i}", cmd))
-        
+            resolved_cmd = get_venv_command(self.config.repo_path, cmd)
+            pipeline.add(CommandValidator(f"custom_{i}", resolved_cmd))
+
         return pipeline
     
     def analyze(self) -> str:
