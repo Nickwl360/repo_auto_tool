@@ -413,6 +413,8 @@ class ClaudeCodeInterface:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                encoding="utf-8",
+                errors="replace",  # Handle invalid UTF-8 gracefully
                 cwd=self.working_dir,
             )
 
