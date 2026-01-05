@@ -170,6 +170,7 @@ class ImprovementState:
         git_commit: str | None = None,
         error: str | None = None,
         token_usage: dict[str, int] | None = None,
+        counts_as_failure: bool = True,
     ) -> None:
         """Record the results of an iteration.
 
@@ -184,6 +185,8 @@ class ImprovementState:
             git_commit: Git commit hash if changes were committed.
             error: Error message if iteration failed.
             token_usage: Token usage dict with input_tokens, output_tokens, etc.
+            counts_as_failure: Whether this failure counts toward consecutive failures.
+                Set to False for timeouts/interrupts that aren't Claude's fault.
         """
         self.current_iteration += 1
         self.total_iterations += 1
@@ -223,8 +226,9 @@ class ImprovementState:
 
         if success and validation_passed:
             self.consecutive_failures = 0
-        else:
+        elif counts_as_failure:
             self.consecutive_failures += 1
+        # If counts_as_failure=False (timeout/interrupt), don't change counter
     
     def get_recent_context(self, n: int = 3) -> str:
         """Get context from recent iterations for Claude.
@@ -412,5 +416,41 @@ class ImprovementState:
         """
         if path.exists():
             logger.info(f"Resuming from existing state: {path}")
-            return cls.load(path)
+            state = cls.load(path)
+            # Reset consecutive failures on resume - fresh start
+            if state.consecutive_failures > 0:
+                logger.info(
+                    f"Resetting {state.consecutive_failures} consecutive failures for fresh start"
+                )
+                state.consecutive_failures = 0
+            # Trim trailing failed iterations to give Claude clean context
+            state._trim_failed_iterations()
+            # Reset status if it was failed/paused
+            if state.status in ("failed", "paused"):
+                state.status = "running"
+            return state
         return cls(goal=goal, repo_path=repo_path)
+
+    def _trim_failed_iterations(self) -> None:
+        """Remove trailing failed iterations to give Claude a clean slate.
+
+        This prevents Claude from seeing a string of failures that might
+        bias it toward the same failing approach.
+        """
+        if not self.iterations:
+            return
+
+        # Count trailing failures
+        trailing_failures = 0
+        for it in reversed(self.iterations):
+            if not it.validation_passed:
+                trailing_failures += 1
+            else:
+                break
+
+        if trailing_failures > 0:
+            # Keep at most 1 failed iteration for context
+            trim_count = max(0, trailing_failures - 1)
+            if trim_count > 0:
+                logger.info(f"Trimming {trim_count} failed iterations from history")
+                self.iterations = self.iterations[:-trim_count]

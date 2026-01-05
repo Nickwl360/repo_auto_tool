@@ -108,6 +108,24 @@ Fix the issues while still making progress toward the goal.
 Do NOT simply revert - try to fix the problems properly.
 """
 
+    RECOVERY_PROMPT = """
+Previous attempts have failed repeatedly. Take a SIMPLER approach.
+
+GOAL: {goal}
+
+WHAT WENT WRONG:
+{errors}
+
+RECOVERY INSTRUCTIONS:
+1. Start fresh - don't build on previous failed attempts
+2. Make ONE small, safe change that moves toward the goal
+3. Ensure the change passes tests and linting before finishing
+4. If the codebase has issues, fix those first before adding features
+5. Prefer minimal changes over comprehensive ones
+
+Make a single, focused improvement that will definitely work.
+"""
+
     def __init__(self, config: ImproverConfig):
         self.config = config
 
@@ -271,7 +289,78 @@ Do NOT simply revert - try to fix the problems properly.
         else:
             logger.error(f"Analysis failed: {response.error}")
             return f"Analysis failed: {response.error}"
-    
+
+    def _attempt_recovery(self) -> bool:
+        """Attempt to recover from repeated failures.
+
+        Asks Claude to take a simpler approach after multiple failures.
+        Returns True if recovery iteration succeeded.
+        """
+        logger.info("Attempting recovery with simpler approach...")
+
+        # Gather error context from recent failures
+        recent_errors = []
+        for it in self.state.iterations[-5:]:
+            if it.error:
+                recent_errors.append(it.error[:500])
+
+        errors_text = "\n".join(recent_errors) if recent_errors else "Multiple validation failures"
+
+        # Build recovery prompt
+        prompt = self.RECOVERY_PROMPT.format(
+            goal=self.config.goal,
+            errors=errors_text,
+        )
+
+        # Ask Claude for a simpler approach
+        response = self.claude.improve(prompt, max_turns=10)
+
+        if not response.success:
+            logger.warning(f"Recovery call failed: {response.error}")
+            return False
+
+        result = response.result
+        logger.info(f"Recovery response: {result[:200]}...")
+
+        # Validate the recovery attempt
+        all_passed, validation_results = self.validators.validate(self.config.repo_path)
+
+        if all_passed:
+            logger.info("[OK] Recovery validation passed!")
+
+            # Commit if using git
+            commit_hash = None
+            if self.git and self.config.commit_each_iteration:
+                commit_hash = self.git.commit(f"Recovery: {result[:50]}")
+
+            self.state.record_iteration(
+                prompt="[RECOVERY] " + prompt[:200],
+                result=result,
+                success=True,
+                validation_passed=True,
+                git_commit=commit_hash,
+                token_usage=response.usage.to_dict() if response.usage else None,
+            )
+            return True
+        else:
+            logger.warning("[FAIL] Recovery validation failed")
+            failure_summary = self.validators.get_failure_summary(validation_results)
+
+            # Rollback recovery attempt
+            if self.git:
+                self.git.rollback()
+
+            self.state.record_iteration(
+                prompt="[RECOVERY] " + prompt[:200],
+                result=result,
+                success=True,
+                validation_passed=False,
+                error=failure_summary,
+                token_usage=response.usage.to_dict() if response.usage else None,
+                counts_as_failure=False,  # Don't count recovery failure
+            )
+            return False
+
     def _determine_next_task(self) -> str:
         """Determine what to work on next."""
         # If we have recent failures, focus on fixing
@@ -332,14 +421,25 @@ Do NOT simply revert - try to fix the problems properly.
         response = self.claude.improve(prompt, max_turns=10, model_override=model_override)
         
         if not response.success:
-            logger.error(f"Claude call failed: {response.error}")
+            error_msg = response.error or "Unknown error"
+            logger.error(f"Claude call failed: {error_msg}")
+
+            # Don't count timeouts/interrupts as failures - they're infrastructure issues
+            is_timeout = "timeout" in error_msg.lower() if error_msg else False
+            is_interrupt = error_msg is None or "interrupt" in error_msg.lower()
+            counts_as_failure = not (is_timeout or is_interrupt)
+
+            if not counts_as_failure:
+                logger.info("(Not counting as failure - timeout/interrupt)")
+
             self.state.record_iteration(
                 prompt=task,
-                result=response.error or "Unknown error",
+                result=error_msg,
                 success=False,
                 validation_passed=False,
-                error=response.error,
+                error=error_msg,
                 token_usage=response.usage.to_dict() if response.usage else None,
+                counts_as_failure=counts_as_failure,
             )
             return False
         
@@ -526,12 +626,21 @@ Do NOT simply revert - try to fix the problems properly.
                         # Continue to next iteration without running current step
                         continue
 
-                # Check for too many consecutive failures
+                # Check for too many consecutive failures - try recovery first
                 if self.state.consecutive_failures >= self.config.max_consecutive_failures:
                     failures = self.state.consecutive_failures
-                    logger.error(f"Too many consecutive failures ({failures})")
-                    self.state.mark_failed("Max consecutive failures reached")
-                    break
+                    logger.warning(f"Hit {failures} consecutive failures - attempting recovery")
+
+                    # Try recovery: reset failures and ask Claude to take a simpler approach
+                    recovery_success = self._attempt_recovery()
+                    if recovery_success:
+                        logger.info("Recovery successful - continuing")
+                        self.state.consecutive_failures = 0
+                        continue
+                    else:
+                        logger.error("Recovery failed - stopping")
+                        self.state.mark_failed("Max consecutive failures reached")
+                        break
 
                 # Check if already complete
                 if self.state.status == "completed":
