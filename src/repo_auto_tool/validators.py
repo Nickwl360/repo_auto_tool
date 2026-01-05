@@ -283,11 +283,14 @@ class ValidationPipeline:
         if not failures:
             return "All validations passed."
 
-        parts = ["Validation failures:"]
+        parts = ["VALIDATION FAILURES (fix these):"]
         for f in failures:
-            parts.append(f"- {f.validator_name}: {f.message}")
+            parts.append(f"\n## {f.validator_name.upper()} FAILED: {f.message}")
             if f.output:
-                # Truncate output for context
-                parts.append(f"  Output: {f.output[:500]}...")
+                # Include more output so Claude can actually fix the issues
+                output = f.output[:2000]
+                if len(f.output) > 2000:
+                    output += "\n... (truncated)"
+                parts.append(f"```\n{output}\n```")
 
         return "\n".join(parts)

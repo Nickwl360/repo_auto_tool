@@ -249,8 +249,11 @@ class ImprovementState:
             for record in recent:
                 status = "[OK]" if record.success and record.validation_passed else "[FAIL]"
                 context_parts.append(
-                    f"  [{status}] Iteration {record.iteration}: {record.result[:200]}..."
+                    f"  {status} Iteration {record.iteration}: {record.result[:200]}..."
                 )
+                # Include error details for failed iterations
+                if record.error and not record.validation_passed:
+                    context_parts.append(f"    ERROR: {record.error[:1000]}")
 
             return "\n".join(context_parts)
 

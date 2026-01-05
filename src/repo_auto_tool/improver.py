@@ -418,22 +418,56 @@ Do NOT simply revert - try to fix the problems properly.
             return True
 
         else:
-            logger.warning("[FAIL] Validation failed")
+            logger.warning("[FAIL] Validation failed - asking Claude to fix")
             failure_summary = self.validators.get_failure_summary(validation_results)
 
             # Record failure pattern for adaptive prompt enhancement
             self.prompt_adapter.record_from_validation_error(failure_summary)
-            adapter_stats = self.prompt_adapter.get_stats()
-            logger.debug(
-                f"Prompt adapter stats: {adapter_stats['failure_counts']}, "
-                f"active guidance: {adapter_stats['active_guidance_count']}"
+
+            # Give Claude a chance to fix the issues (don't rollback yet!)
+            fix_prompt = self.FIX_PROMPT.format(
+                goal=self.config.goal,
+                failures=failure_summary,
+                changes=result[:500],
             )
 
-            # Rollback changes
+            logger.info("Requesting fix from Claude...")
+            fix_response = self.claude.improve(fix_prompt, max_turns=10)
+
+            if fix_response.success:
+                # Re-validate after fix attempt
+                logger.info("Re-validating after fix...")
+                fix_passed, fix_results = self.validators.validate(self.config.repo_path)
+
+                if fix_passed:
+                    logger.info("[OK] Fix successful! Validation passed")
+                    self.prompt_adapter.record_success()
+
+                    # Commit the fixed changes
+                    commit_hash = None
+                    if self.git and self.config.commit_each_iteration:
+                        commit_hash = self.git.commit(
+                            f"Iteration {iteration_num}: {fix_response.result[:50]}"
+                        )
+
+                    self.state.record_iteration(
+                        prompt=task,
+                        result=f"Fixed: {fix_response.result}",
+                        success=True,
+                        validation_passed=True,
+                        git_commit=commit_hash,
+                        token_usage=fix_response.usage.to_dict() if fix_response.usage else None,
+                    )
+                    return True
+                else:
+                    logger.warning("[FAIL] Fix attempt did not resolve issues")
+                    failure_summary = self.validators.get_failure_summary(fix_results)
+
+            # Fix failed or didn't work - now rollback
             if self.git:
                 self.git.rollback()
 
-            # Record the failure (Claude will see this in context next iteration)
+            # Record the failure with full error context
             self.state.record_iteration(
                 prompt=task,
                 result=result,
