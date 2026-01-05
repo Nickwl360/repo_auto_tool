@@ -167,6 +167,11 @@ Use --help-all for advanced options.
         action="store_true",
         help="Create plan, don't execute",
     )
+    modes.add_argument(
+        "--review",
+        action="store_true",
+        help="Review changes on improver branch, show how to apply",
+    )
 
     # === OUTPUT (common) ===
     output = parser.add_argument_group("Output")
@@ -471,7 +476,9 @@ Use --help-all for advanced options.
 
     # Determine the execution mode
     execution_mode = "standard"
-    if args.research:
+    if args.review:
+        execution_mode = "review"
+    elif args.research:
         execution_mode = "research"
     elif args.fix:
         execution_mode = "fix"
@@ -506,14 +513,14 @@ Use --help-all for advanced options.
     # Goal not required for certain modes
     goal_not_required_modes = (
         args.resume or args.analyze_only or args.research or args.fix or
-        args.agent_mode in ("pre-analysis", "diagnostics")
+        args.review or args.agent_mode in ("pre-analysis", "diagnostics")
     )
     has_goal = args.goal or parsed_prompt or args.refactor
 
     if not goal_not_required_modes and not has_goal:
         parser.error(
             "Goal is required unless using --resume, --analyze-only, --research, "
-            "--fix, --refactor, or --agent-mode pre-analysis/diagnostics"
+            "--fix, --refactor, --review, or --agent-mode pre-analysis/diagnostics"
         )
 
     # Check for existing state if resuming
@@ -772,6 +779,83 @@ Use --help-all for advanced options.
         else:
             print(f"Failed to create plan: {result.error}", file=sys.stderr)
             return 1
+
+    if execution_mode == "review":
+        # Review mode: show changes on improver branch and how to apply
+        import subprocess
+
+        branch = args.branch
+        print(f"\n{'='*60}")
+        print(f"REVIEW: Changes on branch '{branch}'")
+        print("=" * 60)
+
+        # Check if branch exists
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", branch],
+            cwd=repo_path, capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            print(f"\nNo changes found. Branch '{branch}' doesn't exist yet.")
+            print("Run repo-improver first to make improvements.")
+            return 0
+
+        # Get base branch
+        base_result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=repo_path, capture_output=True, text=True
+        )
+        current = base_result.stdout.strip()
+        base = "main" if current == branch else current
+
+        # Show commits
+        print(f"\n## Commits ({base}..{branch}):\n")
+        subprocess.run(
+            ["git", "log", f"{base}..{branch}", "--oneline", "--no-decorate"],
+            cwd=repo_path
+        )
+
+        # Show diff stats
+        print("\n## Files Changed:\n")
+        subprocess.run(
+            ["git", "diff", f"{base}..{branch}", "--stat"],
+            cwd=repo_path
+        )
+
+        # Show full diff (truncated)
+        print("\n## Diff Preview (first 100 lines):\n")
+        diff_result = subprocess.run(
+            ["git", "diff", f"{base}..{branch}"],
+            cwd=repo_path, capture_output=True, text=True
+        )
+        diff_lines = diff_result.stdout.split("\n")[:100]
+        print("\n".join(diff_lines))
+        if len(diff_result.stdout.split("\n")) > 100:
+            print(f"\n... (truncated, use 'git diff {base}..{branch}' for full diff)")
+
+        # Show how to apply
+        print(f"\n{'='*60}")
+        print("HOW TO APPLY CHANGES:")
+        print("=" * 60)
+        print(f"""
+Option 1 - Merge the branch:
+  git checkout {base}
+  git merge {branch}
+
+Option 2 - Cherry-pick specific commits:
+  git checkout {base}
+  git cherry-pick <commit-hash>
+
+Option 3 - Review and merge interactively:
+  git checkout {base}
+  git merge --no-commit {branch}
+  # Review changes, then:
+  git commit -m "Apply repo-improver changes"
+
+Option 4 - Create a PR (if using GitHub):
+  git push origin {branch}
+  gh pr create --base {base} --head {branch}
+""")
+        return 0
 
     if execution_mode == "watch":
         # Watch mode: continuous monitoring
