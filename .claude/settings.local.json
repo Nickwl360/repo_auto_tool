@@ -10,7 +10,14 @@
       "Bash(cat:*)",
       "Bash(./venv/Scripts/ruff check:*)",
       "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd verbose mode for full Claude output\n\n- Add verbose parameter to ClaudeCodeInterface\n- Show full text in verbose mode, truncate to 500 chars otherwise\n- Show file paths for Edit/Read tools in verbose mode\n- Show Bash commands in verbose mode\n- Show tool results in verbose mode\n- Pass verbose from config to claude interface\n\nGenerated with Claude Code\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(tree:*)",
+      "Bash(python -c \"from pathlib import Path; import sys; sys.path.insert\\(0, ''../Repo-Auto-Tool/src''\\); from repo_auto_tool import ResearchMode; rm = ResearchMode\\(''test'', Path.cwd\\(\\)\\); baseline = rm.collect_baseline\\(\\); print\\(f''LOC: {baseline.lines_of_code}, Functions: {baseline.functions}, Classes: {baseline.classes}, Errors: {baseline.error_count}, Type errors: {baseline.type_errors}''\\)\")",
+      "Bash(python run_research.py:*)",
+      "Bash(python -m mypy:*)",
+      "Bash(python research_workflow.py:*)",
+      "Bash(python -c \"import sys; sys.path.insert\\(0, ''../Repo-Auto-Tool/src''\\); from repo_auto_tool import SessionManager; m = SessionManager\\(\\); m.delete_session\\(''physics-lab-automated''\\); print\\(''Deleted''\\)\")",
+      "Bash(dir /S /B \"C:\\\\Users\\\\Nick\\\\.repo-improver\\\\sessions\\\\physics-lab-automated_20260105_003650\")"
     ]
   }
 }

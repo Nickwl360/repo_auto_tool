@@ -178,6 +178,18 @@ Make a single, focused improvement that will definitely work.
         self.session_history = SessionHistory.load(config.repo_path)
         self._apply_historical_learnings()
 
+        # Initialize prompt learner for intelligent error recovery
+        from .prompt_learner import PromptLearner
+        self.prompt_learner = PromptLearner.load(config.repo_path)
+        # Learn from current session's iteration history if resuming
+        if self.state.iterations:
+            learned_count = self.prompt_learner.learn_from_iteration_history(
+                [it.to_dict() for it in self.state.iterations],
+                self.prompt_adapter,
+            )
+            if learned_count > 0:
+                logger.info(f"Learned {learned_count} new patterns from session history")
+
         # Initialize interactive interrupt handler
         # Allows users to pause, adjust goals, provide feedback during execution
         self.interrupt_handler: InterruptHandler | None = None
@@ -294,23 +306,58 @@ Make a single, focused improvement that will definitely work.
         """Attempt to recover from repeated failures.
 
         Asks Claude to take a simpler approach after multiple failures.
+        Uses PromptLearner to suggest proven recovery strategies.
         Returns True if recovery iteration succeeded.
         """
         logger.info("Attempting recovery with simpler approach...")
 
         # Gather error context from recent failures
         recent_errors = []
+        last_error_type = None
+        last_error_message = None
+
         for it in self.state.iterations[-5:]:
             if it.error:
                 recent_errors.append(it.error[:500])
+                if last_error_message is None:
+                    last_error_message = it.error
+                    last_error_type = self.prompt_adapter.analyze_error_message(it.error)
 
         errors_text = "\n".join(recent_errors) if recent_errors else "Multiple validation failures"
 
-        # Build recovery prompt
+        # Try to get learned suggestions for this error pattern
+        learned_guidance = ""
+        if last_error_type and last_error_message:
+            from .prompt_learner import ErrorContext
+
+            error_context = ErrorContext.from_error(
+                error_type=last_error_type,
+                error_message=last_error_message,
+                iteration_number=self.state.current_iteration,
+                previous_attempts=self.state.consecutive_failures,
+            )
+
+            suggestions = self.prompt_learner.suggest_prompts(error_context, max_suggestions=2)
+
+            if suggestions:
+                logger.info(f"Found {len(suggestions)} learned recovery strategies")
+                learned_guidance = "\n\nLEARNED RECOVERY STRATEGIES:\n"
+                for i, suggestion in enumerate(suggestions, 1):
+                    learned_guidance += (
+                        f"\n{i}. Confidence: {suggestion.confidence:.0%} | "
+                        f"{suggestion.reasoning}\n"
+                        f"   Approach: {suggestion.prompt[:200]}...\n"
+                    )
+
+        # Build recovery prompt with learned guidance
         prompt = self.RECOVERY_PROMPT.format(
             goal=self.config.goal,
             errors=errors_text,
         )
+
+        # Add learned guidance if available
+        if learned_guidance:
+            prompt += learned_guidance
 
         # Ask Claude for a simpler approach
         response = self.claude.improve(prompt, max_turns=10)
@@ -524,12 +571,42 @@ Make a single, focused improvement that will definitely work.
             # Record failure pattern for adaptive prompt enhancement
             self.prompt_adapter.record_from_validation_error(failure_summary)
 
+            # Try to get learned fix strategies for this error
+            error_type = self.prompt_adapter.analyze_error_message(failure_summary)
+            from .prompt_learner import ErrorContext
+
+            error_context = ErrorContext.from_error(
+                error_type=error_type,
+                error_message=failure_summary,
+                iteration_number=self.state.current_iteration,
+                previous_attempts=self.state.consecutive_failures,
+            )
+
+            suggestions = self.prompt_learner.suggest_prompts(error_context, max_suggestions=2)
+            learned_hints = ""
+
+            if suggestions:
+                logger.info(
+                    f"Found {len(suggestions)} learned fix strategies "
+                    f"(confidence: {suggestions[0].confidence:.0%})"
+                )
+                learned_hints = "\n\nLEARNED FIX STRATEGIES (from past successes):\n"
+                for i, suggestion in enumerate(suggestions, 1):
+                    learned_hints += (
+                        f"\n{i}. {suggestion.reasoning}\n"
+                        f"   Strategy: {suggestion.prompt[:150]}...\n"
+                    )
+
             # Give Claude a chance to fix the issues (don't rollback yet!)
             fix_prompt = self.FIX_PROMPT.format(
                 goal=self.config.goal,
                 failures=failure_summary,
                 changes=result[:500],
             )
+
+            # Add learned hints if available
+            if learned_hints:
+                fix_prompt += learned_hints
 
             logger.info("Requesting fix from Claude...")
             fix_response = self.claude.improve(fix_prompt, max_turns=10)
@@ -795,6 +872,24 @@ Make a single, focused improvement that will definitely work.
         except OSError as e:
             # Don't fail the session if history can't be saved
             logger.warning(f"Could not save session history: {e}")
+
+        # Save learned prompts for intelligent error recovery
+        try:
+            # Learn from final iteration history
+            learned_count = self.prompt_learner.learn_from_iteration_history(
+                [it.to_dict() for it in self.state.iterations],
+                self.prompt_adapter,
+            )
+
+            self.prompt_learner.save()
+
+            learner_stats = self.prompt_learner.get_stats()
+            logger.info(
+                f"Prompt learner updated: {learner_stats['total_prompts']} learned prompts, "
+                f"{learner_stats['avg_success_rate']:.0%} avg success rate"
+            )
+        except OSError as e:
+            logger.warning(f"Could not save prompt learner: {e}")
 
     def _print_summary(self) -> None:
         """Print a summary of the improvement session."""

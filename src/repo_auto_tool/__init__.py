@@ -111,11 +111,53 @@ from .prompt_adapter import (
     FailureRecord,
     PromptAdapter,
 )
+from .prompt_learner import (
+    ErrorContext,
+    LearnedPrompt,
+    PromptLearner,
+    PromptSuggestion,
+)
 from .prompt_parser import (
     ParsedPrompt,
     PromptParser,
     parse_prompt_file,
     parse_prompt_string,
+)
+from .performance_metrics import (
+    IterationMetrics,
+    PerformanceInsights,
+    PerformanceTracker,
+)
+from .context_enricher import (
+    ContextEnricher,
+    EnrichedContext,
+    FileContext,
+)
+from .smart_validator import (
+    ChangeAnalysis,
+    DependencyAnalyzer,
+    SmartValidator,
+)
+from .budget_tracker import (
+    BudgetInfo,
+    BudgetStatus,
+    BudgetTracker,
+    TokenUsage,
+)
+from .session_manager import (
+    SessionComparison,
+    SessionManager,
+    SessionMetadata,
+)
+from .data_visualizer import (
+    ChartData,
+    DataVisualizer,
+)
+from .research_mode import (
+    CodeMetrics,
+    MetricsCollector,
+    ResearchFindings,
+    ResearchMode,
 )
 from .safety import (
     DangerousCommand,
@@ -245,6 +287,40 @@ __all__ = [
     "PromptAdapter",
     "AdaptiveGuidance",
     "FailureRecord",
+    # Prompt learning
+    "PromptLearner",
+    "LearnedPrompt",
+    "PromptSuggestion",
+    "ErrorContext",
+    # Performance metrics
+    "PerformanceTracker",
+    "PerformanceInsights",
+    "IterationMetrics",
+    # Context enrichment
+    "ContextEnricher",
+    "EnrichedContext",
+    "FileContext",
+    # Smart validation
+    "SmartValidator",
+    "ChangeAnalysis",
+    "DependencyAnalyzer",
+    # Budget tracking
+    "BudgetTracker",
+    "BudgetInfo",
+    "BudgetStatus",
+    "TokenUsage",
+    # Session management
+    "SessionManager",
+    "SessionMetadata",
+    "SessionComparison",
+    # Research mode
+    "ResearchMode",
+    "ResearchFindings",
+    "CodeMetrics",
+    "MetricsCollector",
+    # Data visualization
+    "DataVisualizer",
+    "ChartData",
     # Session history
     "SessionHistory",
     "SessionSummary",
